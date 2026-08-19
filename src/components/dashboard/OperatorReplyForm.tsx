@@ -33,6 +33,7 @@ export function OperatorReplyForm({ conversationId, disabledReason }: OperatorRe
 
   const { state, onSubmit } = useApiForm({
     endpoint: `/api/conversations/${conversationId}/messages`,
+    locale: 'en-US',
     successMessage: 'Message queued. It will appear in the history after the worker sends it.',
     buildBody: (formData) => ({ content: String(formData.get('content') ?? '') }),
   });

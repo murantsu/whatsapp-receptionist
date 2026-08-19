@@ -49,7 +49,7 @@ test.describe('Landing e navigazione principale', () => {
     await gotoOk(page, '/');
     await header.getByRole('link', { name: 'Accedi' }).click();
     await expect(page).toHaveURL(/\/login$/);
-    await expect(page.getByRole('button', { name: 'Invia link di accesso' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Send sign-in link' })).toBeVisible();
   });
 
   test('il logo riporta alla home da una pagina interna', async ({ page }) => {

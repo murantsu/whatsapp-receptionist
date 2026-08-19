@@ -23,6 +23,7 @@ export function OnboardingForm({
 }: OnboardingFormProps) {
   const { state, onSubmit } = useApiForm({
     endpoint: '/api/onboarding/tenant',
+    locale: 'en-US',
     successMessage: 'Your shop is configured.',
     redirectTo: '/dashboard',
     // I nomi dei campi del form non coincidono con lo schema dell'API

@@ -21,6 +21,7 @@ export function KnowledgeDocumentForm() {
   const router = useRouter();
   const { state, onSubmit } = useApiForm({
     endpoint: KNOWLEDGE_BASE_ENDPOINT,
+    locale: 'en-US',
     successMessage:
       'Saved. The AI can use this verified information for matching customer questions.',
     buildBody: (formData) => {

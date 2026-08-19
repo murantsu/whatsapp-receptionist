@@ -40,6 +40,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
 
   const { state, onSubmit } = useApiForm({
     endpoint: ENDPOINT,
+    locale: 'en-US',
     successMessage: isConnected ? 'WhatsApp number updated.' : 'WhatsApp number connected.',
     buildBody: (formData) => ({
       phoneNumberId: String(formData.get('phoneNumberId') ?? ''),

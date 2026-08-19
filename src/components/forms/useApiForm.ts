@@ -26,6 +26,8 @@ export interface UseApiFormOptions {
   readonly successMessage: string;
   /** Se valorizzato, al successo naviga qui invece di mostrare il messaggio. */
   readonly redirectTo?: string;
+  /** Lingua dei messaggi generici. Default: italiano, per le pagine legacy. */
+  readonly locale?: 'it-IT' | 'en-US';
   /**
    * Trasforma i campi del form nel body JSON.
    * Default: ogni campo diventa una stringa omonima.
@@ -40,18 +42,36 @@ export interface UseApiFormOptions {
  * errori non esposti, il generico "Internal server error": nessuno dei due è
  * adatto a un utente finale.
  */
-const MESSAGE_BY_CODE: Record<string, string> = {
-  rate_limited: 'Too many attempts. Please try again in a few minutes.',
-  bad_request: 'Some information is invalid. Check the fields and try again.',
-  validation_error: 'Some information is invalid. Check the fields and try again.',
-  unauthorized: 'Your session is invalid. Please sign in again.',
-  forbidden: 'You do not have permission to complete this operation.',
-  not_found: 'The requested item was not found.',
-  conflict: 'An account with this information already exists.',
-};
-
-const FALLBACK_MESSAGE =
-  'An unexpected error occurred. Try again, and contact pilot support if it continues.';
+const MESSAGES = {
+  'it-IT': {
+    byCode: {
+      rate_limited: 'Troppi tentativi ravvicinati. Riprova tra qualche minuto.',
+      bad_request: 'Alcuni dati non sono validi. Controlla i campi e riprova.',
+      validation_error: 'Alcuni dati non sono validi. Controlla i campi e riprova.',
+      unauthorized: 'Sessione non valida. Effettua di nuovo l’accesso.',
+      forbidden: 'Non hai i permessi per completare questa operazione.',
+      not_found: 'Risorsa non trovata.',
+      conflict: 'Esiste già un account con questi dati.',
+    },
+    fallback: 'Si è verificato un errore imprevisto. Riprova, e se persiste scrivici da /contact.',
+    serviceUnavailable: 'Il servizio non è raggiungibile in questo momento. Riprova tra poco.',
+    network: 'Connessione non riuscita. Controlla la rete e riprova.',
+  },
+  'en-US': {
+    byCode: {
+      rate_limited: 'Too many attempts. Please try again in a few minutes.',
+      bad_request: 'Some information is invalid. Check the fields and try again.',
+      validation_error: 'Some information is invalid. Check the fields and try again.',
+      unauthorized: 'Your session is invalid. Please sign in again.',
+      forbidden: 'You do not have permission to complete this operation.',
+      not_found: 'The requested item was not found.',
+      conflict: 'An account with this information already exists.',
+    },
+    fallback: 'An unexpected error occurred. Try again, and contact pilot support if it continues.',
+    serviceUnavailable: 'The service is temporarily unavailable. Please try again shortly.',
+    network: 'The request failed. Check your connection and try again.',
+  },
+} as const;
 
 function defaultBuildBody(formData: FormData): Record<string, string> {
   const body: Record<string, string> = {};
@@ -63,12 +83,17 @@ function defaultBuildBody(formData: FormData): Record<string, string> {
   return body;
 }
 
-function messageFor(payload: unknown, httpStatus: number): string {
+function messageFor(
+  payload: unknown,
+  httpStatus: number,
+  locale: NonNullable<UseApiFormOptions['locale']>,
+): string {
   const envelope = payload as Partial<ApiErrorEnvelope> | null;
   const code = envelope?.error?.code;
+  const messages = MESSAGES[locale];
 
-  if (code && MESSAGE_BY_CODE[code]) {
-    return MESSAGE_BY_CODE[code];
+  if (code && code in messages.byCode) {
+    return messages.byCode[code as keyof typeof messages.byCode];
   }
 
   // Un messaggio esposto dall'API è già stato giudicato mostrabile a monte:
@@ -79,10 +104,10 @@ function messageFor(payload: unknown, httpStatus: number): string {
   }
 
   if (httpStatus >= 500) {
-    return 'The service is temporarily unavailable. Please try again shortly.';
+    return messages.serviceUnavailable;
   }
 
-  return FALLBACK_MESSAGE;
+  return messages.fallback;
 }
 
 /**
@@ -107,6 +132,7 @@ export function useApiForm(options: UseApiFormOptions): {
       const form = event.currentTarget;
       const formData = new FormData(form);
       const body = (options.buildBody ?? defaultBuildBody)(formData);
+      const locale = options.locale ?? 'it-IT';
 
       setState({ status: 'submitting', message: null });
 
@@ -121,7 +147,7 @@ export function useApiForm(options: UseApiFormOptions): {
         // Fallimento di rete: nessuna risposta, quindi nessun envelope da leggere.
         setState({
           status: 'error',
-          message: 'The request failed. Check your connection and try again.',
+          message: MESSAGES[locale].network,
         });
         return;
       }
@@ -134,7 +160,7 @@ export function useApiForm(options: UseApiFormOptions): {
       }
 
       if (!response.ok) {
-        setState({ status: 'error', message: messageFor(payload, response.status) });
+        setState({ status: 'error', message: messageFor(payload, response.status, locale) });
         return;
       }
 

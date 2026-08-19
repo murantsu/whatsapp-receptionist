@@ -6,6 +6,7 @@ import { useApiForm } from '@/components/forms/useApiForm';
 export function LoginForm() {
   const { state, onSubmit } = useApiForm({
     endpoint: '/api/auth/magic-link',
+    locale: 'en-US',
     successMessage:
       'If the address belongs to an account, you will receive a sign-in link shortly. Check your spam folder too.',
   });
