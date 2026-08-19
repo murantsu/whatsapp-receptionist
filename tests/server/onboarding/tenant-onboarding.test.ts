@@ -131,6 +131,41 @@ describe('TenantOnboardingService', () => {
     ]);
   });
 
+  it('applies the managed US auto repair pilot defaults', async () => {
+    const repository = new FakeTenantOnboardingRepository();
+    const service = new TenantOnboardingService(repository);
+
+    await service.complete({
+      user: authenticatedUser({ email: 'owner@example.com' }),
+      now,
+      payload: {
+        pilotProfile: 'us_auto_repair',
+        tenantName: 'Main Street Auto',
+      },
+    });
+
+    expect(repository.createdBundle).toMatchObject({
+      tenant: {
+        name: 'Main Street Auto',
+        timezone: 'America/New_York',
+        businessType: 'auto_repair_shop',
+        country: 'US',
+      },
+      config: {
+        defaultLocale: 'en-US',
+        voiceMessagesEnabled: false,
+        voiceRepliesEnabled: false,
+      },
+      services: [
+        {
+          name: 'Auto repair appointment',
+          durationMinutes: 60,
+          active: true,
+        },
+      ],
+    });
+  });
+
   it('refuses to create a duplicate tenant when auth claims already exist', async () => {
     const service = new TenantOnboardingService(new FakeTenantOnboardingRepository());
 

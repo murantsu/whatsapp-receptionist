@@ -2,12 +2,11 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 const SIDEBAR_ITEMS = [
-  { href: '/dashboard', label: 'Panoramica', icon: '◐' },
-  { href: '/conversations', label: 'Conversazioni', icon: '✻' },
-  { href: '/calendar', label: 'Calendario', icon: '◫' },
-  { href: '/knowledge', label: 'Knowledge base', icon: '☰' },
-  { href: '/settings', label: 'Impostazioni', icon: '⚙' },
-  { href: '/billing', label: 'Fatturazione', icon: '€' },
+  { href: '/dashboard', label: 'Dashboard', icon: '◐' },
+  { href: '/conversations', label: 'Conversations', icon: '✻' },
+  { href: '/calendar', label: 'Appointments', icon: '◫' },
+  { href: '/knowledge', label: 'Knowledge Base', icon: '☰' },
+  { href: '/settings', label: 'Settings', icon: '⚙' },
 ] as const;
 
 export interface DashboardShellProps {
@@ -19,11 +18,11 @@ export interface DashboardShellProps {
 export function DashboardShell({
   children,
   currentPath,
-  tenantName = 'Il tuo studio',
+  tenantName = 'Your auto repair shop',
 }: Readonly<DashboardShellProps>) {
   return (
     <div className="dashboard-shell">
-      <aside className="sidebar" aria-label="Navigazione dashboard">
+      <aside className="sidebar" aria-label="Dashboard navigation">
         <Link
           href="/dashboard"
           className="site-logo"
@@ -40,7 +39,7 @@ export function DashboardShell({
           }}
         >
           <p className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-            Tenant attivo
+            Active shop
           </p>
           <p
             style={{
@@ -72,20 +71,6 @@ export function DashboardShell({
             );
           })}
         </ul>
-
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 'var(--space-6)',
-            left: 'var(--space-6)',
-            right: 'var(--space-6)',
-          }}
-        >
-          <Link href="/help" className="sidebar-link" style={{ fontSize: 'var(--text-xs)' }}>
-            <span aria-hidden="true">?</span>
-            Centro assistenza
-          </Link>
-        </div>
       </aside>
 
       <main className="dashboard-main" id="main">

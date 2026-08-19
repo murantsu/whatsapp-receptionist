@@ -4,6 +4,7 @@ import { logger } from '@/lib/logging/logger';
 import { createBookingBridgeService } from '@/server/ai/booking-bridge';
 import { type ReplyOrchestrator } from '@/server/ai/reply-orchestrator';
 import { createUsageLimitsService, type UsageLimitsService } from '@/server/usage/limits';
+import { isEnUsLocale } from '@/lib/pilot/auto-repair';
 import { WhatsAppAutoReplyService } from '@/server/whatsapp/auto-reply';
 import type { WhatsAppWebhookPayload } from '@/types/whatsapp';
 import {
@@ -229,6 +230,7 @@ export class WhatsAppWebhookService {
 
       if (inserted.messageId && event.message.textBody) {
         if (isWhatsAppOptOutCommand(event.message.textBody)) {
+          const config = await this.repository.getTenantMessagingConfig(tenantId);
           await this.repository.upsertCustomerOptOut({
             tenantId,
             channel: 'whatsapp',
@@ -257,6 +259,7 @@ export class WhatsAppWebhookService {
             inboundExternalId: event.externalId,
             messageId: inserted.messageId,
             occurredAt: event.occurredAt,
+            locale: config.defaultLocale,
           });
 
           return;
@@ -285,21 +288,58 @@ export class WhatsAppWebhookService {
       }
 
       if (inserted.messageId && event.message.audio) {
-        await this.repository.enqueueVoiceProcessingJob({
-          tenantId,
-          messageId: inserted.messageId,
-          mediaId: event.message.audio.id,
-          mediaMimeType: event.message.audio.mimeType,
-          mediaSha256: event.message.audio.sha256,
-          payload: {
-            provider: event.provider,
-            whatsappMessageId: event.message.id,
-            phoneNumberId: event.phoneNumberId,
-            displayPhoneNumber: event.displayPhoneNumber,
+        const config = await this.repository.getTenantMessagingConfig(tenantId);
+
+        const voiceInputEnabled =
+          !isEnUsLocale(config.defaultLocale) && (config.voiceMessagesEnabled ?? true);
+
+        if (voiceInputEnabled) {
+          await this.repository.enqueueVoiceProcessingJob({
+            tenantId,
+            messageId: inserted.messageId,
+            mediaId: event.message.audio.id,
+            mediaMimeType: event.message.audio.mimeType,
+            mediaSha256: event.message.audio.sha256,
+            payload: {
+              provider: event.provider,
+              whatsappMessageId: event.message.id,
+              phoneNumberId: event.phoneNumberId,
+              displayPhoneNumber: event.displayPhoneNumber,
+              customerIdentifier: event.message.from,
+              audio: event.message.audio,
+            },
+          });
+        } else {
+          await this.repository.updateInboundMessageAnalysis({
+            tenantId,
+            messageId: inserted.messageId,
+            intent: 'other',
+            confidence: 1,
+            tokensUsed: 0,
+            costCents: 0,
+            metadata: {
+              voiceInput: { enabled: false, action: 'text_requested' },
+            },
+          });
+
+          const optedOut = await this.repository.isCustomerOptedOut({
+            tenantId,
+            channel: 'whatsapp',
             customerIdentifier: event.message.from,
-            audio: event.message.audio,
-          },
-        });
+          });
+
+          if (!optedOut) {
+            await this.enqueueVoiceDisabledNotice({
+              tenantId,
+              conversationId: conversation.conversationId,
+              customerIdentifier: event.message.from,
+              inboundExternalId: event.externalId,
+              messageId: inserted.messageId,
+              occurredAt: event.occurredAt,
+              locale: config.defaultLocale,
+            });
+          }
+        }
       }
     }
   }
@@ -311,13 +351,16 @@ export class WhatsAppWebhookService {
     inboundExternalId: string;
     messageId: string;
     occurredAt: Date;
+    locale: string;
   }): Promise<void> {
+    const content = isEnUsLocale(input.locale)
+      ? 'You are unsubscribed from automated WhatsApp messages. Contact the shop directly if you want to opt back in.'
+      : 'Confermo: non riceverai piu messaggi automatici da Ambrogio su WhatsApp. Per riattivarli, contatta direttamente lo studio.';
     const outbound = await this.repository.insertOutboundMessage({
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       externalId: `opt-out-confirmation:${input.inboundExternalId}`,
-      content:
-        'Confermo: non riceverai piu messaggi automatici da Ambrogio su WhatsApp. Per riattivarli, contatta direttamente lo studio.',
+      content,
       createdAt: input.occurredAt,
       metadata: {
         source: 'whatsapp_opt_out_confirmation',
@@ -337,7 +380,7 @@ export class WhatsAppWebhookService {
       payload: {
         type: 'text',
         text: {
-          body: 'Confermo: non riceverai piu messaggi automatici da Ambrogio su WhatsApp. Per riattivarli, contatta direttamente lo studio.',
+          body: content,
           previewUrl: false,
         },
         metadata: {
@@ -346,6 +389,42 @@ export class WhatsAppWebhookService {
           inboundExternalId: input.inboundExternalId,
         },
       },
+    });
+  }
+
+  private async enqueueVoiceDisabledNotice(input: {
+    tenantId: string;
+    conversationId: string;
+    customerIdentifier: string;
+    inboundExternalId: string;
+    messageId: string;
+    occurredAt: Date;
+    locale: string;
+  }): Promise<void> {
+    const content = isEnUsLocale(input.locale)
+      ? 'Voice messages are not supported for this service. Please send your request as a text message.'
+      : 'I messaggi vocali non sono attivi. Invia la richiesta come messaggio di testo.';
+    const metadata = {
+      source: 'voice_input_disabled_notice',
+      inboundMessageId: input.messageId,
+      inboundExternalId: input.inboundExternalId,
+    };
+    const outbound = await this.repository.insertOutboundMessage({
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      externalId: `voice-disabled:${input.inboundExternalId}`,
+      content,
+      createdAt: input.occurredAt,
+      metadata,
+    });
+
+    if (!outbound.created || !outbound.messageId) return;
+
+    await this.repository.enqueueOutboundMessage({
+      tenantId: input.tenantId,
+      messageId: outbound.messageId,
+      recipientIdentifier: input.customerIdentifier,
+      payload: { type: 'text', text: { body: content, previewUrl: false }, metadata },
     });
   }
 }
@@ -384,12 +463,18 @@ function isWhatsAppOptOutCommand(text: string): boolean {
     return false;
   }
 
-  if (/\b(appuntamento|prenotazione|visita|orario|sposta|annulla)\b/.test(normalized)) {
+  if (
+    /\b(appuntamento|prenotazione|visita|orario|sposta|annulla|appointment|booking|reschedule|move|cancel)\b/.test(
+      normalized,
+    )
+  ) {
     return false;
   }
 
   return (
     /\b(stop|unsubscribe|rimuovimi|cancellami|disiscrivimi)\b/.test(normalized) ||
-    /\b(non scrivetemi|non contattatemi|basta messaggi)\b/.test(normalized)
+    /\b(remove me|do not message me|don t message me|don't message me|non scrivetemi|non contattatemi|basta messaggi)\b/.test(
+      normalized,
+    )
   );
 }

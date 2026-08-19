@@ -33,7 +33,8 @@ export function OperatorReplyForm({ conversationId, disabledReason }: OperatorRe
 
   const { state, onSubmit } = useApiForm({
     endpoint: `/api/conversations/${conversationId}/messages`,
-    successMessage: 'Messaggio accodato. Comparirà nella cronologia appena il worker lo invia.',
+    locale: 'en-US',
+    successMessage: 'Message queued. It will appear in the history after the worker sends it.',
     buildBody: (formData) => ({ content: String(formData.get('content') ?? '') }),
   });
 
@@ -86,7 +87,7 @@ export function OperatorReplyForm({ conversationId, disabledReason }: OperatorRe
           required
           maxLength={WHATSAPP_TEXT_MAX_LENGTH}
           className="textarea"
-          placeholder="Scrivi la risposta che il cliente riceverà su WhatsApp."
+          placeholder="Write the reply the customer will receive on WhatsApp."
           disabled={isDisabled}
           onChange={handleChange}
           aria-describedby={
@@ -96,8 +97,7 @@ export function OperatorReplyForm({ conversationId, disabledReason }: OperatorRe
           }
         />
         <p id={`operator-reply-helper-${conversationId}`} className="helper">
-          {length}/{WHATSAPP_TEXT_MAX_LENGTH} caratteri. Il messaggio resta registrato nella
-          cronologia come inviato da operatore.
+          {length}/{WHATSAPP_TEXT_MAX_LENGTH} characters. The message is recorded as a human reply.
         </p>
       </div>
 
@@ -106,7 +106,7 @@ export function OperatorReplyForm({ conversationId, disabledReason }: OperatorRe
           L’invio viene accodato e parte dal numero WhatsApp collegato.
         </span>
         <button type="submit" className="btn btn-primary" disabled={isDisabled || length === 0}>
-          {isSubmitting ? 'Invio in corso…' : 'Invia messaggio'}
+          {isSubmitting ? 'Sending…' : 'Send message'}
         </button>
       </div>
     </form>

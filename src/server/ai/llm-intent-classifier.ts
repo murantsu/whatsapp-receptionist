@@ -21,7 +21,7 @@ export class LlmIntentClassifier implements IntentClassifier {
 
   async classify(input: IntentClassificationInput): Promise<IntentClassification> {
     const result = await this.llm.complete({
-      system: intentClassificationSystemPrompt(),
+      system: intentClassificationSystemPrompt(input.locale),
       messages: [
         {
           role: 'user',
@@ -75,7 +75,25 @@ export class FallbackIntentClassifier implements IntentClassifier {
   }
 }
 
-function intentClassificationSystemPrompt(): string {
+function intentClassificationSystemPrompt(locale: string | undefined): string {
+  if (locale?.toLowerCase().startsWith('en')) {
+    return [
+      'You classify customer messages for a United States auto repair shop receptionist.',
+      'Return valid JSON only.',
+      `Allowed intents: ${intentCategories.join(', ')}.`,
+      'booking_request: request to book or check availability for auto service.',
+      'reschedule_request: request to move or change an existing appointment.',
+      'cancellation_request: request to cancel an existing appointment.',
+      'pricing_question: question about a verified price, rate, or estimate.',
+      'opening_hours_question: question about hours, opening, closing, address, or location.',
+      'human_handoff: explicit request for a person, a serious complaint, emergency, safety concern, or request for diagnosis or drivability advice.',
+      'other: greeting, ambiguous text, spam, or anything that cannot be classified safely.',
+      'An urgent appointment request is booking_request unless the message also describes an actual safety or emergency signal.',
+      'Schema: {"intent":"booking_request","confidence":0.88,"matchedSignals":["schedule"]}',
+      'If uncertain, use confidence below 0.6.',
+    ].join('\n');
+  }
+
   return [
     'Sei il classificatore di intent di Ambrogio.ai per studi professionali italiani.',
     'Rispondi solo con JSON valido.',

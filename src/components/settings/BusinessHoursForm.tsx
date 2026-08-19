@@ -18,7 +18,7 @@ import {
 
 interface BusinessHoursFormProps {
   readonly hours: readonly BusinessHourView[];
-  /** Solo owner e admin possono scrivere: l'API rifiuta gli altri con 403. */
+  /** Only owners and admins can write; the API rejects other roles with 403. */
   readonly canManage: boolean;
 }
 
@@ -64,7 +64,7 @@ export function BusinessHoursForm({ hours, canManage }: BusinessHoursFormProps) 
       if (found.length > 0) {
         setState({
           status: 'error',
-          message: 'Controlla i giorni segnalati qui sotto: gli orari non sono validi.',
+          message: 'Check the highlighted days below: the business hours are not valid.',
         });
         return;
       }
@@ -77,12 +77,11 @@ export function BusinessHoursForm({ hours, canManage }: BusinessHoursFormProps) 
         return;
       }
 
-      // Rileggiamo dalla risposta: il server normalizza e riordina le fasce,
-      // quindi lo stato locale potrebbe non coincidere con quanto salvato.
+      // Read the response because the server normalizes and reorders time ranges.
       setDrafts(toDayDrafts(result.data));
       setState({
         status: 'success',
-        message: 'Orari salvati. Ambrogio propone appuntamenti solo dentro queste fasce.',
+        message: 'Business hours saved. Appointments are only offered within these hours.',
       });
     },
     [drafts],
@@ -94,11 +93,10 @@ export function BusinessHoursForm({ hours, canManage }: BusinessHoursFormProps) 
     <form onSubmit={onSubmit} className="stack stack-6" noValidate>
       <section className="card stack stack-4">
         <div className="stack stack-2">
-          <h2 style={{ fontSize: 'var(--text-xl)' }}>Settimana tipo</h2>
+          <h2 style={{ fontSize: 'var(--text-xl)' }}>Weekly schedule</h2>
           <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-            Questi orari sono l&apos;unica fonte da cui Ambrogio calcola la disponibilità: un giorno
-            marcato chiuso non verrà mai proposto, e nessun appuntamento verrà fissato fuori dalle
-            fasce indicate.
+            These hours determine appointment availability. Closed days are never offered, and
+            appointments are not created outside the hours shown here.
           </p>
         </div>
 
@@ -106,10 +104,9 @@ export function BusinessHoursForm({ hours, canManage }: BusinessHoursFormProps) 
 
         {hiddenRanges > 0 ? (
           <p className="helper" role="note">
-            Attenzione: sono salvate {hiddenRanges}{' '}
-            {hiddenRanges === 1 ? 'fascia oraria aggiuntiva' : 'fasce orarie aggiuntive'} (per
-            esempio una pausa pranzo che spezza la giornata). Questa schermata gestisce una sola
-            fascia per giorno: salvando, le altre verranno rimosse.
+            Warning: {hiddenRanges} additional time {hiddenRanges === 1 ? 'range is' : 'ranges are'}
+            saved. This pilot screen supports one range per day; saving will remove the additional
+            ranges.
           </p>
         ) : null}
 
@@ -142,7 +139,7 @@ export function BusinessHoursForm({ hours, canManage }: BusinessHoursFormProps) 
       {canManage ? (
         <div className="row" style={{ gap: 'var(--space-3)', flexWrap: 'wrap' }}>
           <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-            {isSubmitting ? 'Salvataggio…' : 'Salva orari'}
+            {isSubmitting ? 'Saving…' : 'Save hours'}
           </button>
           <button
             type="button"
@@ -150,12 +147,12 @@ export function BusinessHoursForm({ hours, canManage }: BusinessHoursFormProps) 
             onClick={copyFirstOpenDay}
             disabled={isSubmitting || openDays < 2}
           >
-            Copia il primo giorno aperto sugli altri
+            Copy the first open day to the others
           </button>
         </div>
       ) : (
         <p className="helper">
-          Solo il titolare dell&apos;account e gli amministratori possono modificare gli orari.
+          Only the account owner and administrators can change business hours.
         </p>
       )}
     </form>
@@ -208,7 +205,7 @@ function DayRow({
         <>
           <div className="field" style={{ minWidth: '9rem' }}>
             <label htmlFor={opensId} className="label">
-              Apre
+              Opens
             </label>
             <input
               id={opensId}
@@ -222,7 +219,7 @@ function DayRow({
           </div>
           <div className="field" style={{ minWidth: '9rem' }}>
             <label htmlFor={closesId} className="label">
-              Chiude
+              Closes
             </label>
             <input
               id={closesId}
@@ -236,7 +233,7 @@ function DayRow({
           </div>
         </>
       ) : (
-        <span className="badge badge-neutral">Chiuso</span>
+        <span className="badge badge-neutral">Closed</span>
       )}
     </fieldset>
   );

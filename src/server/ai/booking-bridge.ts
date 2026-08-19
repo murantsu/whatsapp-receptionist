@@ -15,6 +15,7 @@ import {
   type CancelAppointmentInput,
 } from '@/server/appointments/booking';
 import type { IntentCategory } from '@/server/ai/intent-router';
+import { isEnUsLocale } from '@/lib/pilot/auto-repair';
 
 export type BookingBridgeInput = {
   tenantId: string;
@@ -24,12 +25,14 @@ export type BookingBridgeInput = {
   text: string;
   occurredAt: Date;
   intent?: IntentCategory;
+  locale?: string;
 };
 
 export type BookingBridgeReply = {
   handled: boolean;
   replyText: string | null;
   metadata: Record<string, unknown>;
+  handoffReason?: 'booking_manual_review' | 'calendar_sync_failed';
 };
 
 export type BookingServiceOption = {
@@ -60,10 +63,17 @@ export type PendingAppointmentReference = {
 
 export type ConversationBookingState =
   | {
+      status: 'auto_repair_intake';
+      request: Record<string, unknown>;
+      proposedAt: string;
+      expiresAt: string;
+    }
+  | {
       status: 'slots_proposed';
       serviceId: string;
       serviceName: string;
       slots: PendingBookingSlot[];
+      request?: Record<string, unknown>;
       proposedAt: string;
       expiresAt: string;
     }
@@ -157,17 +167,62 @@ export class BookingBridgeService {
 
   async createBookingReply(input: BookingBridgeInput): Promise<BookingBridgeReply> {
     const timezone = await this.repository.getTenantTimezone(input.tenantId);
-    const extracted = await this.extractor.extract({
+    let extracted = await this.extractor.extract({
       text: input.text,
       now: input.occurredAt,
       timezone,
+      ...(input.locale !== undefined ? { locale: input.locale } : {}),
     });
+
+    if (extracted.signals.includes('date_ambiguous_numeric')) {
+      return {
+        handled: true,
+        replyText:
+          'That numeric date is ambiguous. Please write the month in words, for example “March 4” or “April 3”.',
+        metadata: { bookingBridge: { action: 'ambiguous_date_clarification_requested' } },
+      };
+    }
+
+    // An explicit request for a person always wins over an unfinished booking flow.
+    // The auto-reply layer will send the handoff message and escalate the conversation.
+    if (input.intent === 'human_handoff') {
+      return { handled: false, replyText: null, metadata: {} };
+    }
+
     const state = await this.repository.getConversationBookingState({
       tenantId: input.tenantId,
       conversationId: input.conversationId,
     });
 
-    if (state) {
+    if (state?.status === 'auto_repair_intake') {
+      if (new Date(state.expiresAt).getTime() < input.occurredAt.getTime()) {
+        await this.repository.clearConversationBookingState({
+          tenantId: input.tenantId,
+          conversationId: input.conversationId,
+        });
+      } else {
+        const previous = deserializeStructuredBookingRequest(state.request);
+        extracted = mergeBookingRequests(
+          previous,
+          enrichContextualAutoRepairReply(previous, extracted, input.text),
+        );
+        const intake = await this.continueAutoRepairIntake(input, extracted);
+
+        if (intake) {
+          return intake;
+        }
+
+        input = {
+          ...input,
+          customerName: extracted.customerName ?? input.customerName,
+          // A short answer such as a vehicle year is intentionally low confidence
+          // on its own. Once an existing intake has collected every required field,
+          // continue that known booking flow instead of treating the final answer as
+          // a new, unrelated message.
+          intent: 'booking_request',
+        };
+      }
+    } else if (state) {
       return this.handleConversationState(input, timezone, extracted, state);
     }
 
@@ -187,13 +242,30 @@ export class BookingBridgeService {
       };
     }
 
+    if (isEnUsLocale(input.locale)) {
+      const intake = await this.continueAutoRepairIntake(input, extracted);
+
+      if (intake) {
+        return intake;
+      }
+
+      input = {
+        ...input,
+        customerName: extracted.customerName ?? input.customerName,
+      };
+    }
+
     const services = await this.repository.listActiveServices(input.tenantId);
 
     if (services.length === 0) {
       return {
         handled: true,
-        replyText:
+        replyText: localize(
+          input.locale,
+          'The shop has not configured its bookable services yet. I have sent your request for a human reply.',
           'Posso aiutarti a prenotare, ma lo studio non ha ancora configurato i servizi. Segno la richiesta al team.',
+        ),
+        ...(isEnUsLocale(input.locale) ? { handoffReason: 'booking_manual_review' as const } : {}),
         metadata: {
           bookingBridge: {
             action: 'no_services_configured',
@@ -207,7 +279,7 @@ export class BookingBridgeService {
     if (!selectedService && services.length > 1) {
       return {
         handled: true,
-        replyText: `Certo, ti aiuto a prenotare. Quale servizio ti interessa?\n\n${services
+        replyText: `${localize(input.locale, 'Which service do you need?', 'Certo, ti aiuto a prenotare. Quale servizio ti interessa?')}\n\n${services
           .slice(0, 6)
           .map((service, index) => `${index + 1}. ${service.name}`)
           .join('\n')}`,
@@ -247,7 +319,12 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText: `Ho controllato ${service.name}, ma non vedo slot liberi nei prossimi giorni. Segno la richiesta al team cosi puo' proporti un orario manualmente.`,
+        replyText: localize(
+          input.locale,
+          `I do not see an available ${service.name} time in that window. I have sent the request to the shop for a human reply.`,
+          `Ho controllato ${service.name}, ma non vedo slot liberi nei prossimi giorni. Segno la richiesta al team cosi puo' proporti un orario manualmente.`,
+        ),
+        ...(isEnUsLocale(input.locale) ? { handoffReason: 'booking_manual_review' as const } : {}),
         metadata: {
           bookingBridge: {
             action: 'no_slots_available',
@@ -264,6 +341,7 @@ export class BookingBridgeService {
       serviceId: service.id,
       serviceName: service.name,
       slots: pendingSlots,
+      request: serializeStructuredBookingRequest(extracted),
       proposedAt: input.occurredAt.toISOString(),
       expiresAt: addMinutes(input.occurredAt, 30).toISOString(),
     };
@@ -276,9 +354,11 @@ export class BookingBridgeService {
 
     return {
       handled: true,
-      replyText: `Ho trovato questi slot per ${service.name}:\n\n${formatSlotList(
-        pendingSlots,
-      )}\n\nRispondimi con "confermo 1", "confermo 2" o "confermo 3".`,
+      replyText: localize(
+        input.locale,
+        `I found these times for ${service.name}:\n\n${formatSlotList(pendingSlots, input.locale)}\n\nReply “confirm 1”, “confirm 2”, or “confirm 3”.`,
+        `Ho trovato questi slot per ${service.name}:\n\n${formatSlotList(pendingSlots, input.locale)}\n\nRispondimi con "confermo 1", "confermo 2" o "confermo 3".`,
+      ),
       metadata: {
         bookingBridge: {
           action: 'slots_proposed',
@@ -303,8 +383,11 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText:
+        replyText: localize(
+          input.locale,
+          'Those times have expired. Please tell me the service and preferred time again so I can recheck availability.',
           'Quegli slot sono scaduti. Ricontrollo la disponibilita: scrivimi di nuovo quale servizio vuoi prenotare.',
+        ),
         metadata: {
           bookingBridge: {
             action: 'slot_state_expired',
@@ -324,20 +407,35 @@ export class BookingBridgeService {
     }
 
     try {
+      const intakeRequest = state.request
+        ? deserializeStructuredBookingRequest(state.request)
+        : null;
       const appointment = await this.bookingService.createAppointment({
         tenantId: input.tenantId,
         serviceId: slot.serviceId,
         conversationId: input.conversationId,
         customerIdentifier: input.customerIdentifier,
-        customerName: input.customerName?.trim() || 'Cliente WhatsApp',
-        customerPhone: input.customerIdentifier,
+        customerName:
+          intakeRequest?.customerName ??
+          input.customerName?.trim() ??
+          (isEnUsLocale(input.locale) ? 'WhatsApp customer' : 'Cliente WhatsApp'),
+        customerPhone: intakeRequest?.customerPhone ?? input.customerIdentifier,
         scheduledAt: new Date(slot.start),
         durationMinutes: slot.durationMinutes,
         bookingSource: 'whatsapp_ai',
+        notes: isEnUsLocale(input.locale) ? formatAutoRepairIntakeNotes(input, state) : null,
         now: input.occurredAt,
-        requireCalendarSync: false,
-        sendConfirmation: true,
+        requireCalendarSync: isEnUsLocale(input.locale),
+        sendConfirmation: !isEnUsLocale(input.locale),
       });
+
+      if (isEnUsLocale(input.locale) && appointment.calendarSyncStatus !== 'synced') {
+        return this.calendarSyncFailureReply(
+          input,
+          'appointment_created',
+          appointment.appointmentId,
+        );
+      }
 
       await this.repository.clearConversationBookingState({
         tenantId: input.tenantId,
@@ -346,9 +444,11 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText: `Perfetto, ho prenotato ${slot.serviceName} per ${formatSlotStart(
-          slot,
-        )}. Riceverai anche la conferma WhatsApp dello studio.`,
+        replyText: localize(
+          input.locale,
+          `Your ${slot.serviceName} appointment is confirmed for ${formatSlotStart(slot, input.locale)}.`,
+          `Perfetto, ho prenotato ${slot.serviceName} per ${formatSlotStart(slot, input.locale)}. Riceverai anche la conferma WhatsApp dello studio.`,
+        ),
         metadata: {
           bookingBridge: {
             action: 'appointment_created',
@@ -367,8 +467,11 @@ export class BookingBridgeService {
 
         return {
           handled: true,
-          replyText:
+          replyText: localize(
+            input.locale,
+            'That time is no longer available. Please send another preferred day or time and I will recheck.',
             'Mi spiace, quello slot non risulta piu disponibile. Scrivimi di nuovo il servizio e controllo altri orari.',
+          ),
           metadata: {
             bookingBridge: {
               action: 'slot_conflict',
@@ -378,15 +481,57 @@ export class BookingBridgeService {
         };
       }
 
+      if (isEnUsLocale(input.locale)) {
+        return this.calendarSyncFailureReply(input, 'appointment_create_failed');
+      }
+
       throw error;
     }
+  }
+
+  private async continueAutoRepairIntake(
+    input: BookingBridgeInput,
+    request: StructuredBookingRequest,
+  ): Promise<BookingBridgeReply | null> {
+    const missing = missingAutoRepairIntakeFields(request, input.customerName);
+
+    if (missing.length === 0) {
+      await this.repository.clearConversationBookingState({
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+      });
+      return null;
+    }
+
+    await this.repository.saveConversationBookingState({
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      state: {
+        status: 'auto_repair_intake',
+        request: serializeStructuredBookingRequest(request),
+        proposedAt: input.occurredAt.toISOString(),
+        expiresAt: addMinutes(input.occurredAt, 30).toISOString(),
+      },
+    });
+
+    return {
+      handled: true,
+      replyText: autoRepairIntakeQuestion(missing),
+      metadata: {
+        bookingBridge: {
+          action: 'auto_repair_intake_requested',
+          missingFields: missing,
+          collected: serializeStructuredBookingRequest(request),
+        },
+      },
+    };
   }
 
   private async handleConversationState(
     input: BookingBridgeInput,
     timezone: string,
     extracted: StructuredBookingRequest,
-    state: ConversationBookingState,
+    state: Exclude<ConversationBookingState, { status: 'auto_repair_intake' }>,
   ): Promise<BookingBridgeReply> {
     if (new Date(state.expiresAt).getTime() < input.occurredAt.getTime()) {
       await this.repository.clearConversationBookingState({
@@ -398,8 +543,16 @@ export class BookingBridgeService {
         handled: true,
         replyText:
           state.status === 'slots_proposed'
-            ? 'Quegli slot sono scaduti. Ricontrollo la disponibilita: scrivimi di nuovo quale servizio vuoi prenotare.'
-            : 'La scelta precedente e scaduta. Scrivimi di nuovo cosa vuoi fare e ricontrollo tutto.',
+            ? localize(
+                input.locale,
+                'Those times have expired. Please send the service and preferred time again.',
+                'Quegli slot sono scaduti. Ricontrollo la disponibilita: scrivimi di nuovo quale servizio vuoi prenotare.',
+              )
+            : localize(
+                input.locale,
+                'The previous selection expired. Please tell me what you want to do and I will check again.',
+                'La scelta precedente e scaduta. Scrivimi di nuovo cosa vuoi fare e ricontrollo tutto.',
+              ),
         metadata: {
           bookingBridge: {
             action:
@@ -430,7 +583,11 @@ export class BookingBridgeService {
       if (selectedIndex === null) {
         return {
           handled: true,
-          replyText: 'Dimmi il numero dell appuntamento che vuoi spostare, per esempio "sposta 1".',
+          replyText: localize(
+            input.locale,
+            'Tell me which appointment to move, for example “move 1”.',
+            'Dimmi il numero dell appuntamento che vuoi spostare, per esempio "sposta 1".',
+          ),
           metadata: {
             bookingBridge: {
               action: 'reschedule_appointment_selection_repeated',
@@ -469,7 +626,11 @@ export class BookingBridgeService {
       if (selectedSlotIndex === null) {
         return {
           handled: true,
-          replyText: 'Dimmi quale nuovo slot vuoi confermare, per esempio "confermo 1".',
+          replyText: localize(
+            input.locale,
+            'Tell me which new time to confirm, for example “confirm 1”.',
+            'Dimmi quale nuovo slot vuoi confermare, per esempio "confermo 1".',
+          ),
           metadata: {
             bookingBridge: {
               action: 'reschedule_slot_selection_repeated',
@@ -486,7 +647,11 @@ export class BookingBridgeService {
     if (selectedIndex === null) {
       return {
         handled: true,
-        replyText: 'Dimmi il numero dell appuntamento che vuoi annullare, per esempio "annulla 1".',
+        replyText: localize(
+          input.locale,
+          'Tell me which appointment to cancel, for example “cancel 1”.',
+          'Dimmi il numero dell appuntamento che vuoi annullare, per esempio "annulla 1".',
+        ),
         metadata: {
           bookingBridge: {
             action: 'cancellation_selection_repeated',
@@ -527,8 +692,12 @@ export class BookingBridgeService {
     if (appointments.length === 0) {
       return {
         handled: true,
-        replyText:
+        replyText: localize(
+          input.locale,
+          'I could not safely identify a future appointment for this WhatsApp number. I have sent the request to the shop for a human reply.',
           'Non trovo appuntamenti futuri collegati a questo numero. Mandami giorno e orario dell appuntamento che vuoi spostare, cosi lo faccio verificare dal team.',
+        ),
+        ...(isEnUsLocale(input.locale) ? { handoffReason: 'booking_manual_review' as const } : {}),
         metadata: {
           bookingBridge: {
             action: 'reschedule_no_appointments_found',
@@ -554,9 +723,11 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText: `Ho trovato piu appuntamenti. Quale vuoi spostare?\n\n${formatAppointmentList(
-          appointments,
-        )}`,
+        replyText: localize(
+          input.locale,
+          `I found more than one appointment. Which one should I move?\n\n${formatAppointmentList(appointments, input.locale)}`,
+          `Ho trovato piu appuntamenti. Quale vuoi spostare?\n\n${formatAppointmentList(appointments, input.locale)}`,
+        ),
         metadata: {
           bookingBridge: {
             action: 'reschedule_appointment_selection_requested',
@@ -589,9 +760,11 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText: `Ho trovato ${formatAppointmentStart(
-          appointment,
-        )}. Per quale giorno o fascia oraria vuoi spostarlo?`,
+        replyText: localize(
+          input.locale,
+          `I found ${formatAppointmentStart(appointment, input.locale)}. What new day and time do you prefer?`,
+          `Ho trovato ${formatAppointmentStart(appointment, input.locale)}. Per quale giorno o fascia oraria vuoi spostarlo?`,
+        ),
         metadata: {
           bookingBridge: {
             action: 'reschedule_date_requested',
@@ -619,6 +792,33 @@ export class BookingBridgeService {
     targetRequest: StructuredBookingRequest;
     hasTargetPreference: boolean;
   }> {
+    if (isEnUsLocale(input.input.locale)) {
+      const targetMatch = input.input.text.match(
+        /\b(?:move|reschedule|change)\b.+?\b(?:appointment|booking)\b\s+(?:to|for)\s+(.+)$/i,
+      );
+      const targetText = targetMatch?.[1]?.trim();
+
+      if (targetText) {
+        const targetRequest = await this.extractor.extract({
+          text: targetText,
+          now: input.input.occurredAt,
+          timezone: input.timezone,
+          ...(input.input.locale !== undefined ? { locale: input.input.locale } : {}),
+        });
+
+        return {
+          lookupRequest: {
+            ...input.extracted,
+            datePreference: null,
+            timePreference: { dayPart: 'any', startHour: null, endHour: null },
+            signals: [...input.extracted.signals, 'reschedule_target_preserved'],
+          },
+          targetRequest: mergeTargetContext(targetRequest, input.extracted),
+          hasTargetPreference: hasRescheduleTargetPreference(targetRequest),
+        };
+      }
+    }
+
     const sourceTarget = splitSourceAndTargetDateReference(input.input.text);
 
     if (sourceTarget) {
@@ -627,11 +827,13 @@ export class BookingBridgeService {
           text: sourceTarget.sourceText,
           now: input.input.occurredAt,
           timezone: input.timezone,
+          ...(input.input.locale !== undefined ? { locale: input.input.locale } : {}),
         }),
         this.extractor.extract({
           text: sourceTarget.targetText,
           now: input.input.occurredAt,
           timezone: input.timezone,
+          ...(input.input.locale !== undefined ? { locale: input.input.locale } : {}),
         }),
       ]);
 
@@ -665,8 +867,12 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText:
+        replyText: localize(
+          input.locale,
+          'I found the appointment but could not safely match it to a configured service. I have sent it to the shop for a human reply.',
           'Ho trovato l appuntamento, ma non riesco a collegarlo a un servizio configurato. Segno la richiesta al team per spostarlo manualmente.',
+        ),
+        ...(isEnUsLocale(input.locale) ? { handoffReason: 'booking_manual_review' as const } : {}),
         metadata: {
           bookingBridge: {
             action: 'reschedule_missing_service',
@@ -690,8 +896,11 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText:
+        replyText: localize(
+          input.locale,
+          'What new day and time do you prefer? For example, “tomorrow afternoon”.',
           'Certo. Dimmi il nuovo giorno o la fascia oraria che preferisci, per esempio "domani pomeriggio".',
+        ),
         metadata: {
           bookingBridge: {
             action: 'reschedule_date_requested',
@@ -717,8 +926,11 @@ export class BookingBridgeService {
     if (slots.length === 0) {
       return {
         handled: true,
-        replyText:
+        replyText: localize(
+          input.locale,
+          'I do not see an open time in that window. Please send another preferred day or time.',
           'Non vedo slot liberi in quella fascia. Dimmi un altro giorno o orario e ricontrollo.',
+        ),
         metadata: {
           bookingBridge: {
             action: 'reschedule_no_slots_available',
@@ -744,9 +956,11 @@ export class BookingBridgeService {
 
     return {
       handled: true,
-      replyText: `Posso spostarlo in uno di questi slot:\n\n${formatSlotList(
-        slots,
-      )}\n\nRispondimi con "confermo 1", "confermo 2" o "confermo 3".`,
+      replyText: localize(
+        input.locale,
+        `I can move it to one of these times:\n\n${formatSlotList(slots, input.locale)}\n\nReply “confirm 1”, “confirm 2”, or “confirm 3”.`,
+        `Posso spostarlo in uno di questi slot:\n\n${formatSlotList(slots, input.locale)}\n\nRispondimi con "confermo 1", "confermo 2" o "confermo 3".`,
+      ),
       metadata: {
         bookingBridge: {
           action: 'reschedule_slots_proposed',
@@ -778,13 +992,21 @@ export class BookingBridgeService {
       appointmentId: state.appointment.appointmentId,
       scheduledAt: new Date(slot.start),
       durationMinutes: slot.durationMinutes,
-      requireCalendarSync: false,
-      sendConfirmation: true,
+      requireCalendarSync: isEnUsLocale(input.locale),
+      sendConfirmation: !isEnUsLocale(input.locale),
       now: input.occurredAt,
     };
 
     try {
       const result = await this.bookingService.rescheduleAppointment(rescheduleInput);
+
+      if (isEnUsLocale(input.locale) && result.calendarSyncStatus !== 'synced') {
+        return this.calendarSyncFailureReply(
+          input,
+          'appointment_rescheduled',
+          result.appointmentId,
+        );
+      }
 
       await this.repository.clearConversationBookingState({
         tenantId: input.tenantId,
@@ -793,9 +1015,11 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText: `Perfetto, ho spostato l appuntamento a ${formatSlotStart(
-          slot,
-        )}. Riceverai anche la nuova conferma WhatsApp dello studio.`,
+        replyText: localize(
+          input.locale,
+          `Your appointment is confirmed for ${formatSlotStart(slot, input.locale)}.`,
+          `Perfetto, ho spostato l appuntamento a ${formatSlotStart(slot, input.locale)}. Riceverai anche la nuova conferma WhatsApp dello studio.`,
+        ),
         metadata: {
           bookingBridge: {
             action: 'appointment_rescheduled',
@@ -813,8 +1037,11 @@ export class BookingBridgeService {
 
         return {
           handled: true,
-          replyText:
+          replyText: localize(
+            input.locale,
+            'That time is no longer available. Please send another preferred day or time.',
             'Mi spiace, quello slot non risulta piu disponibile. Dimmi un altro giorno o orario e ricontrollo.',
+          ),
           metadata: {
             bookingBridge: {
               action: 'reschedule_slot_conflict',
@@ -822,6 +1049,14 @@ export class BookingBridgeService {
             },
           },
         };
+      }
+
+      if (isEnUsLocale(input.locale)) {
+        return this.calendarSyncFailureReply(
+          input,
+          'appointment_reschedule_failed',
+          state.appointment.appointmentId,
+        );
       }
 
       throw error;
@@ -842,8 +1077,12 @@ export class BookingBridgeService {
     if (appointments.length === 0) {
       return {
         handled: true,
-        replyText:
+        replyText: localize(
+          input.locale,
+          'I could not safely identify a future appointment for this WhatsApp number. I have sent the cancellation request to the shop for a human reply.',
           'Non trovo appuntamenti futuri collegati a questo numero. Mandami giorno e orario dell appuntamento da annullare, cosi lo faccio verificare dal team.',
+        ),
+        ...(isEnUsLocale(input.locale) ? { handoffReason: 'booking_manual_review' as const } : {}),
         metadata: {
           bookingBridge: {
             action: 'cancellation_no_appointments_found',
@@ -867,9 +1106,11 @@ export class BookingBridgeService {
 
       return {
         handled: true,
-        replyText: `Ho trovato piu appuntamenti. Quale vuoi annullare?\n\n${formatAppointmentList(
-          appointments,
-        )}`,
+        replyText: localize(
+          input.locale,
+          `I found more than one appointment. Which one should I cancel?\n\n${formatAppointmentList(appointments, input.locale)}`,
+          `Ho trovato piu appuntamenti. Quale vuoi annullare?\n\n${formatAppointmentList(appointments, input.locale)}`,
+        ),
         metadata: {
           bookingBridge: {
             action: 'cancellation_selection_requested',
@@ -897,13 +1138,31 @@ export class BookingBridgeService {
     const cancelInput: CancelAppointmentInput = {
       tenantId: input.tenantId,
       appointmentId: appointment.appointmentId,
-      requireCalendarSync: false,
-      sendCancellation: true,
+      requireCalendarSync: isEnUsLocale(input.locale),
+      sendCancellation: !isEnUsLocale(input.locale),
       now: input.occurredAt,
     };
-    const result = (await this.bookingService.cancelAppointment(
-      cancelInput,
-    )) as ChangeAppointmentResult;
+    let result: ChangeAppointmentResult;
+
+    try {
+      result = (await this.bookingService.cancelAppointment(
+        cancelInput,
+      )) as ChangeAppointmentResult;
+    } catch (error) {
+      if (isEnUsLocale(input.locale)) {
+        return this.calendarSyncFailureReply(
+          input,
+          'appointment_cancel_failed',
+          appointment.appointmentId,
+        );
+      }
+
+      throw error;
+    }
+
+    if (isEnUsLocale(input.locale) && result.calendarSyncStatus !== 'synced') {
+      return this.calendarSyncFailureReply(input, 'appointment_cancelled', result.appointmentId);
+    }
 
     await this.repository.clearConversationBookingState({
       tenantId: input.tenantId,
@@ -912,13 +1171,40 @@ export class BookingBridgeService {
 
     return {
       handled: true,
-      replyText: `Va bene, ho annullato l appuntamento ${formatAppointmentStart(
-        appointment,
-      )}. Riceverai anche la conferma WhatsApp dello studio.`,
+      replyText: localize(
+        input.locale,
+        `The appointment ${formatAppointmentStart(appointment, input.locale)} has been cancelled in Google Calendar.`,
+        `Va bene, ho annullato l appuntamento ${formatAppointmentStart(appointment, input.locale)}. Riceverai anche la conferma WhatsApp dello studio.`,
+      ),
       metadata: {
         bookingBridge: {
           action: 'appointment_cancelled',
           appointmentId: result.appointmentId,
+        },
+      },
+    };
+  }
+
+  private async calendarSyncFailureReply(
+    input: BookingBridgeInput,
+    action: string,
+    appointmentId?: string,
+  ): Promise<BookingBridgeReply> {
+    await this.repository.clearConversationBookingState({
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+    });
+
+    return {
+      handled: true,
+      replyText:
+        'I could not confirm this request in Google Calendar, so it is not confirmed yet. I have sent it to the shop for manual review.',
+      handoffReason: 'calendar_sync_failed',
+      metadata: {
+        bookingBridge: {
+          action: 'calendar_sync_failed',
+          attemptedAction: action,
+          ...(appointmentId !== undefined ? { appointmentId } : {}),
         },
       },
     };
@@ -1171,6 +1457,12 @@ function serializeStructuredBookingRequest(
 ): Record<string, unknown> {
   return {
     serviceQuery: request.serviceQuery,
+    customerName: request.customerName,
+    customerPhone: request.customerPhone,
+    vehicleMake: request.vehicleMake,
+    vehicleModel: request.vehicleModel,
+    vehicleYear: request.vehicleYear,
+    problemSymptoms: request.problemSymptoms,
     urgency: request.urgency,
     confidence: request.confidence,
     signals: request.signals,
@@ -1446,21 +1738,23 @@ function selectProposedSlotIndex(
 ): number | null {
   const normalized = normalizeForMatching(text);
   const hasConfirmationSignal =
-    /\b(confermo|ok|va bene|perfetto|prendo|prenota|blocca|si|sì)\b/.test(normalized);
+    /\b(confermo|confirm|confirmed|ok|okay|yes|va bene|perfetto|prendo|prenota|blocca|si|sì)\b/.test(
+      normalized,
+    );
 
   if (!hasConfirmationSignal) {
     return null;
   }
 
-  if (/\b(1|primo|prima)\b/.test(normalized)) {
+  if (/\b(1|first|primo|prima)\b/.test(normalized)) {
     return 0;
   }
 
-  if (/\b(2|secondo|seconda)\b/.test(normalized)) {
+  if (/\b(2|second|secondo|seconda)\b/.test(normalized)) {
     return 1;
   }
 
-  if (/\b(3|terzo|terza)\b/.test(normalized)) {
+  if (/\b(3|third|terzo|terza)\b/.test(normalized)) {
     return 2;
   }
 
@@ -1474,27 +1768,29 @@ function selectNumberedOptionIndex(text: string, count: number): number | null {
     return null;
   }
 
-  if (/\b(1|primo|prima)\b/.test(normalized)) {
+  if (/\b(1|first|primo|prima)\b/.test(normalized)) {
     return 0;
   }
 
-  if (count >= 2 && /\b(2|secondo|seconda)\b/.test(normalized)) {
+  if (count >= 2 && /\b(2|second|secondo|seconda)\b/.test(normalized)) {
     return 1;
   }
 
-  if (count >= 3 && /\b(3|terzo|terza)\b/.test(normalized)) {
+  if (count >= 3 && /\b(3|third|terzo|terza)\b/.test(normalized)) {
     return 2;
   }
 
-  if (count >= 4 && /\b(4|quarto|quarta)\b/.test(normalized)) {
+  if (count >= 4 && /\b(4|fourth|quarto|quarta)\b/.test(normalized)) {
     return 3;
   }
 
-  if (count >= 5 && /\b(5|quinto|quinta)\b/.test(normalized)) {
+  if (count >= 5 && /\b(5|fifth|quinto|quinta)\b/.test(normalized)) {
     return 4;
   }
 
-  return count === 1 && /\b(si|sì|ok|va bene|confermo)\b/.test(normalized) ? 0 : null;
+  return count === 1 && /\b(si|sì|yes|ok|okay|va bene|confermo|confirm)\b/.test(normalized)
+    ? 0
+    : null;
 }
 
 function toPendingSlot(slot: BookingSlot): PendingBookingSlot {
@@ -1523,21 +1819,29 @@ function toPendingAppointment(
   };
 }
 
-function formatSlotList(slots: PendingBookingSlot[]): string {
-  return slots.map((slot, index) => `${index + 1}. ${formatSlotStart(slot)}`).join('\n');
+function formatSlotList(slots: PendingBookingSlot[], locale?: string): string {
+  return slots.map((slot, index) => `${index + 1}. ${formatSlotStart(slot, locale)}`).join('\n');
 }
 
-function formatAppointmentList(appointments: PendingAppointmentReference[]): string {
+function formatAppointmentList(
+  appointments: PendingAppointmentReference[],
+  locale?: string,
+): string {
   return appointments
-    .map((appointment, index) => `${index + 1}. ${formatAppointmentStart(appointment)}`)
+    .map((appointment, index) => `${index + 1}. ${formatAppointmentStart(appointment, locale)}`)
     .join('\n');
 }
 
-function formatAppointmentStart(appointment: PendingAppointmentReference): string {
-  const serviceName = appointment.serviceName ?? 'appuntamento';
-  const customerLabel = appointment.customerName ? ` per ${appointment.customerName}` : '';
+function formatAppointmentStart(appointment: PendingAppointmentReference, locale?: string): string {
+  const english = isEnUsLocale(locale);
+  const serviceName = appointment.serviceName ?? (english ? 'appointment' : 'appuntamento');
+  const customerLabel = appointment.customerName
+    ? english
+      ? ` for ${appointment.customerName}`
+      : ` per ${appointment.customerName}`
+    : '';
 
-  return `${serviceName}${customerLabel} ${new Intl.DateTimeFormat('it-IT', {
+  return `${serviceName}${customerLabel} ${new Intl.DateTimeFormat(english ? 'en-US' : 'it-IT', {
     weekday: 'long',
     day: '2-digit',
     month: 'long',
@@ -1547,8 +1851,8 @@ function formatAppointmentStart(appointment: PendingAppointmentReference): strin
   }).format(new Date(appointment.scheduledAt))}`;
 }
 
-function formatSlotStart(slot: PendingBookingSlot): string {
-  return new Intl.DateTimeFormat('it-IT', {
+function formatSlotStart(slot: PendingBookingSlot, locale?: string): string {
+  return new Intl.DateTimeFormat(isEnUsLocale(locale) ? 'en-US' : 'it-IT', {
     weekday: 'long',
     day: '2-digit',
     month: 'long',
@@ -1556,6 +1860,10 @@ function formatSlotStart(slot: PendingBookingSlot): string {
     minute: '2-digit',
     timeZone: slot.timezone || 'Europe/Rome',
   }).format(new Date(slot.start));
+}
+
+function localize(locale: string | undefined, english: string, italian: string): string {
+  return isEnUsLocale(locale) ? english : italian;
 }
 
 function isConversationBookingState(value: unknown): value is ConversationBookingState {
@@ -1570,6 +1878,8 @@ function isConversationBookingState(value: unknown): value is ConversationBookin
   }
 
   switch (candidate.status) {
+    case 'auto_repair_intake':
+      return typeof candidate.request === 'object';
     case 'slots_proposed':
       return (
         typeof candidate.serviceId === 'string' &&
@@ -1591,6 +1901,273 @@ function isConversationBookingState(value: unknown): value is ConversationBookin
     default:
       return false;
   }
+}
+
+type AutoRepairIntakeField =
+  | 'customer_name'
+  | 'vehicle_make'
+  | 'vehicle_model'
+  | 'vehicle_year'
+  | 'requested_service_or_symptoms'
+  | 'preferred_date'
+  | 'preferred_time';
+
+function missingAutoRepairIntakeFields(
+  request: StructuredBookingRequest,
+  existingCustomerName: string | null,
+): AutoRepairIntakeField[] {
+  const missing: AutoRepairIntakeField[] = [];
+
+  if (!request.customerName && !existingCustomerName) missing.push('customer_name');
+  if (!request.vehicleMake) missing.push('vehicle_make');
+  if (!request.vehicleModel) missing.push('vehicle_model');
+  if (!request.vehicleYear) missing.push('vehicle_year');
+  if (!request.serviceQuery && !request.problemSymptoms) {
+    missing.push('requested_service_or_symptoms');
+  }
+  if (!request.datePreference) missing.push('preferred_date');
+  if (request.timePreference.dayPart === 'any') missing.push('preferred_time');
+
+  return missing;
+}
+
+function autoRepairIntakeQuestion(missing: AutoRepairIntakeField[]): string {
+  const needsName = missing.includes('customer_name');
+  const vehicleFields = missing.filter((field) => field.startsWith('vehicle_'));
+  const needsService = missing.includes('requested_service_or_symptoms');
+
+  if (needsName || vehicleFields.length > 0 || needsService) {
+    const requested: string[] = [];
+
+    if (needsName) requested.push('your name');
+    if (vehicleFields.length > 0) {
+      requested.push(
+        vehicleFields.length === 3
+          ? 'the vehicle year, make, and model'
+          : `the missing vehicle ${vehicleFields.map((field) => field.replace('vehicle_', '')).join(' and ')}`,
+      );
+    }
+    if (needsService) requested.push('the service you need or the symptoms you noticed');
+
+    return `Please share ${joinEnglishList(requested)}. I will not ask again for details you already provided.`;
+  }
+
+  if (missing.includes('preferred_date') && missing.includes('preferred_time')) {
+    return 'What day and time do you prefer? You can say, for example, “next Friday at 3 PM”.';
+  }
+
+  if (missing.includes('preferred_date')) {
+    return 'What day do you prefer? Please write the month in words for numeric dates.';
+  }
+
+  return 'What time do you prefer? You can say “morning”, “afternoon”, or a specific time such as “3 PM”.';
+}
+
+function joinEnglishList(values: string[]): string {
+  if (values.length <= 1) return values[0] ?? 'the missing details';
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, and ${values.at(-1)}`;
+}
+
+function deserializeStructuredBookingRequest(
+  value: Record<string, unknown>,
+): StructuredBookingRequest {
+  const time = isPlainRecord(value.timePreference) ? value.timePreference : {};
+  const date = isPlainRecord(value.datePreference) ? value.datePreference : null;
+  const from = typeof date?.from === 'string' ? new Date(date.from) : null;
+  const to = typeof date?.to === 'string' ? new Date(date.to) : null;
+
+  return {
+    serviceQuery: stringOrNull(value.serviceQuery),
+    datePreference:
+      from && to && Number.isFinite(from.getTime()) && Number.isFinite(to.getTime())
+        ? { from, to, label: stringOrNull(date?.label) ?? 'requested date' }
+        : null,
+    timePreference: {
+      dayPart: isBookingDayPart(time.dayPart) ? time.dayPart : 'any',
+      startHour: numberOrNull(time.startHour),
+      endHour: numberOrNull(time.endHour),
+    },
+    urgency: value.urgency === 'urgent' ? 'urgent' : 'normal',
+    customerName: stringOrNull(value.customerName),
+    customerPhone: stringOrNull(value.customerPhone),
+    vehicleMake: stringOrNull(value.vehicleMake),
+    vehicleModel: stringOrNull(value.vehicleModel),
+    vehicleYear: numberOrNull(value.vehicleYear),
+    problemSymptoms: stringOrNull(value.problemSymptoms),
+    confidence: numberOrNull(value.confidence) ?? 0.45,
+    signals: Array.isArray(value.signals)
+      ? value.signals.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
+}
+
+function mergeBookingRequests(
+  previous: StructuredBookingRequest,
+  current: StructuredBookingRequest,
+): StructuredBookingRequest {
+  return {
+    serviceQuery: current.serviceQuery ?? previous.serviceQuery,
+    datePreference: current.datePreference ?? previous.datePreference,
+    timePreference:
+      current.timePreference.dayPart === 'any' ? previous.timePreference : current.timePreference,
+    urgency: current.urgency === 'urgent' || previous.urgency === 'urgent' ? 'urgent' : 'normal',
+    customerName: previous.customerName ?? current.customerName,
+    customerPhone: previous.customerPhone ?? current.customerPhone,
+    vehicleMake: previous.vehicleMake ?? current.vehicleMake ?? null,
+    vehicleModel: previous.vehicleModel ?? current.vehicleModel ?? null,
+    vehicleYear: previous.vehicleYear ?? current.vehicleYear ?? null,
+    problemSymptoms: current.problemSymptoms ?? previous.problemSymptoms ?? null,
+    confidence: Math.max(current.confidence, previous.confidence),
+    signals: [...new Set([...previous.signals, ...current.signals])],
+  };
+}
+
+function enrichContextualAutoRepairReply(
+  previous: StructuredBookingRequest,
+  current: StructuredBookingRequest,
+  text: string,
+): StructuredBookingRequest {
+  const normalized = text.trim();
+  const vehicleYear =
+    current.vehicleYear ??
+    (!previous.vehicleYear
+      ? numberFromMatch(normalized.match(/\b(19[5-9]\d|20[0-3]\d)\b/)?.[1])
+      : null);
+  const vehicleMake =
+    current.vehicleMake ?? (!previous.vehicleMake ? matchStandaloneVehicleMake(normalized) : null);
+  const resolvedMake = previous.vehicleMake ?? vehicleMake;
+  const vehicleModel =
+    current.vehicleModel ??
+    (!previous.vehicleModel && resolvedMake
+      ? matchStandaloneVehicleModel(normalized, resolvedMake, vehicleYear)
+      : null);
+
+  return {
+    ...current,
+    vehicleMake,
+    vehicleModel,
+    vehicleYear,
+    signals: [
+      ...current.signals,
+      ...(vehicleMake && !current.vehicleMake ? ['vehicle_make_context'] : []),
+      ...(vehicleModel && !current.vehicleModel ? ['vehicle_model_context'] : []),
+      ...(vehicleYear && !current.vehicleYear ? ['vehicle_year_context'] : []),
+    ],
+  };
+}
+
+const autoRepairVehicleMakes = [
+  'Acura',
+  'Audi',
+  'BMW',
+  'Buick',
+  'Cadillac',
+  'Chevrolet',
+  'Chevy',
+  'Chrysler',
+  'Dodge',
+  'Ford',
+  'Genesis',
+  'GMC',
+  'Honda',
+  'Hyundai',
+  'Infiniti',
+  'Jaguar',
+  'Jeep',
+  'Kia',
+  'Land Rover',
+  'Lexus',
+  'Lincoln',
+  'Mazda',
+  'Mercedes-Benz',
+  'Mercedes',
+  'Mini',
+  'Mitsubishi',
+  'Nissan',
+  'Ram',
+  'Subaru',
+  'Tesla',
+  'Toyota',
+  'Volkswagen',
+  'Volvo',
+] as const;
+
+function matchStandaloneVehicleMake(text: string): string | null {
+  return (
+    autoRepairVehicleMakes.find((make) =>
+      new RegExp(`\\b${make.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text),
+    ) ?? null
+  );
+}
+
+function matchStandaloneVehicleModel(
+  text: string,
+  make: string,
+  vehicleYear: number | null,
+): string | null {
+  const candidate = text
+    .replace(new RegExp(`\\b${make.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), ' ')
+    .replace(vehicleYear ? new RegExp(`\\b${vehicleYear}\\b`, 'g') : /$^/, ' ')
+    .replace(/\b(?:it is|it's|the model is|model|a|an|my|car|vehicle)\b/gi, ' ')
+    .replace(/[^A-Za-z0-9-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return /^[A-Za-z0-9-]{1,24}$/.test(candidate) ? candidate : null;
+}
+
+function numberFromMatch(value: string | undefined): number | null {
+  if (!value) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatAutoRepairIntakeNotes(
+  input: BookingBridgeInput,
+  state: Extract<ConversationBookingState, { status: 'slots_proposed' }>,
+): string {
+  const request = state.request ? deserializeStructuredBookingRequest(state.request) : null;
+  const vehicle = [request?.vehicleYear, request?.vehicleMake, request?.vehicleModel]
+    .filter((value) => value !== null && value !== undefined && String(value).trim())
+    .join(' ');
+
+  return [
+    `Customer: ${request?.customerName ?? input.customerName ?? 'WhatsApp customer'}`,
+    `Phone: ${request?.customerPhone ?? input.customerIdentifier}`,
+    vehicle ? `Vehicle: ${vehicle}` : null,
+    request?.serviceQuery ? `Requested service: ${request.serviceQuery}` : null,
+    request?.problemSymptoms ? `Problem / symptoms: ${request.problemSymptoms}` : null,
+    `Urgency: ${request?.urgency ?? 'normal'}`,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n');
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function isBookingDayPart(
+  value: unknown,
+): value is StructuredBookingRequest['timePreference']['dayPart'] {
+  return [
+    'any',
+    'morning',
+    'afternoon',
+    'evening',
+    'after_hour',
+    'before_hour',
+    'exact_hour',
+  ].includes(String(value));
 }
 
 function isPendingAppointmentReference(value: unknown): value is PendingAppointmentReference {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LlmDomainReplyGenerator, type DomainReplyInput } from '@/server/ai/domain-reply';
+import { LlmDomainReplyGenerator } from '@/server/ai/domain-reply';
 import type { AiRuntimeContext } from '@/server/ai/context';
 import type { LlmClient, LlmCompletionInput } from '@/server/ai/llm';
 
@@ -54,6 +54,27 @@ describe('LlmDomainReplyGenerator', () => {
         },
       ],
     });
+  });
+
+  it('adds the en-US auto repair safety boundary to the model prompt', async () => {
+    const llm = new RecordingLlmClient();
+    const generator = new LlmDomainReplyGenerator(llm);
+
+    await generator.generate({
+      text: 'Is this brake noise safe to drive with?',
+      assistantName: 'Shop Assistant',
+      locale: 'en-US',
+      classification: {
+        intent: 'other',
+        confidence: 0.9,
+        matchedSignals: [],
+      },
+      context: contextFixture(),
+    });
+
+    expect(llm.calls[0]?.system).toContain('Do not diagnose vehicle faults');
+    expect(llm.calls[0]?.system).toContain('Do not claim whether a vehicle is safe to drive');
+    expect(llm.calls[0]?.system).toContain('Do not invent services, prices, hours');
   });
 });
 

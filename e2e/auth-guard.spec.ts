@@ -49,7 +49,7 @@ test.describe('Area tenant protetta', () => {
       await page.goto(path);
 
       await expect(page).toHaveURL(LOGIN_URL);
-      await expect(page.getByRole('button', { name: 'Invia link di accesso' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Send sign-in link' })).toBeVisible();
       await expect(page.getByLabel(DASHBOARD_SHELL_MARKER)).toHaveCount(0);
     });
   }
@@ -61,7 +61,7 @@ test.describe('Pannello admin protetto', () => {
       await page.goto(path);
 
       await expect(page).toHaveURL(LOGIN_URL);
-      await expect(page.getByRole('button', { name: 'Invia link di accesso' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Send sign-in link' })).toBeVisible();
       await expect(page.getByRole('link', { name: new RegExp(ADMIN_SHELL_MARKER) })).toHaveCount(0);
     });
   }

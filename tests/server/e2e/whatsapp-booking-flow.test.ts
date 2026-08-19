@@ -269,6 +269,98 @@ describe('WhatsApp backend booking E2E flow', () => {
     expect(booking.availabilityCalls).toHaveLength(0);
     expect(repository.bookingState()).toBeNull();
   });
+
+  it('continues en-US auto repair intake across short follow-up messages', async () => {
+    const repository = new InMemoryWhatsAppBookingRepository();
+    repository.tenantConfigs.set(tenantId, {
+      assistantName: 'Shop Assistant',
+      aiDisclosureEnabled: true,
+      autoReplyEnabled: true,
+      defaultLocale: 'en-US',
+      voiceMessagesEnabled: false,
+    });
+    repository.services.splice(0, 1, {
+      id: 'service_1',
+      name: 'Oil change',
+      durationMinutes: 30,
+      priceCents: 7000,
+    });
+    const bridge = new BookingBridgeService(
+      repository,
+      new InMemoryAppointmentBookingService(repository) as unknown as AppointmentBookingService,
+    );
+    const autoReply = new WhatsAppAutoReplyService(repository, {
+      autoReplyEnabled: true,
+      replyOrchestrator: new ReplyOrchestrator(new RuleBasedIntentClassifier()),
+      bookingBridge: bridge,
+    });
+    const webhook = new WhatsAppWebhookService(repository, { autoReplyService: autoReply });
+
+    await webhook.processPayload(
+      textPayload(
+        'wamid.en.intake',
+        'My name is Alex Smith. I need an oil change tomorrow afternoon.',
+      ),
+      context,
+    );
+    expect(lastOutboundText(repository)).toContain('vehicle year, make, and model');
+
+    await webhook.processPayload(textPayload('wamid.en.make', 'Toyota'), context);
+    expect(lastOutboundText(repository)).toContain('missing vehicle model and year');
+
+    await webhook.processPayload(textPayload('wamid.en.model', 'Camry'), context);
+    expect(lastOutboundText(repository)).toContain('missing vehicle year');
+
+    await webhook.processPayload(textPayload('wamid.en.year', '2020'), context);
+    expect(repository.bookingState()).toMatchObject({ status: 'slots_proposed' });
+    expect(lastOutboundText(repository)).toContain('I found these times');
+    expect(repository.messageAnalyses.map((analysis) => analysis.intent)).toEqual([
+      'booking_request',
+      'booking_request',
+      'booking_request',
+      'booking_request',
+    ]);
+  });
+
+  it('lets an en-US human request interrupt unfinished intake', async () => {
+    const repository = new InMemoryWhatsAppBookingRepository();
+    repository.tenantConfigs.set(tenantId, {
+      assistantName: 'Shop Assistant',
+      aiDisclosureEnabled: true,
+      autoReplyEnabled: true,
+      defaultLocale: 'en-US',
+      voiceMessagesEnabled: false,
+    });
+    repository.services.splice(0, 1, {
+      id: 'service_1',
+      name: 'Oil change',
+      durationMinutes: 30,
+      priceCents: 7000,
+    });
+    const bridge = new BookingBridgeService(
+      repository,
+      new InMemoryAppointmentBookingService(repository) as unknown as AppointmentBookingService,
+    );
+    const autoReply = new WhatsAppAutoReplyService(repository, {
+      autoReplyEnabled: true,
+      replyOrchestrator: new ReplyOrchestrator(new RuleBasedIntentClassifier()),
+      bookingBridge: bridge,
+    });
+    const webhook = new WhatsAppWebhookService(repository, { autoReplyService: autoReply });
+
+    await webhook.processPayload(
+      textPayload('wamid.en.pending', 'I need an oil change tomorrow afternoon.'),
+      context,
+    );
+    await webhook.processPayload(
+      textPayload('wamid.en.human', 'I want to speak with a person'),
+      context,
+    );
+
+    expect(repository.messageAnalyses.at(-1)?.intent).toBe('human_handoff');
+    expect(lastOutboundText(repository)).toContain('human reply');
+    expect(repository.bookingState()).toMatchObject({ status: 'auto_repair_intake' });
+  });
 });
 
 type StoredConversation = {
@@ -698,6 +790,7 @@ class InMemoryAppointmentBookingService {
       slot('2026-04-28T09:00:00.000Z', '2026-04-28T09:30:00.000Z'),
       slot('2026-04-28T10:00:00.000Z', '2026-04-28T10:30:00.000Z'),
       slot('2026-04-28T11:00:00.000Z', '2026-04-28T11:30:00.000Z'),
+      slot('2026-04-28T14:00:00.000Z', '2026-04-28T14:30:00.000Z'),
     ].filter(
       (item) =>
         item.serviceId === input.serviceId &&

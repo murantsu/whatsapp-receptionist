@@ -34,6 +34,7 @@ const OnboardingBusinessHourSchema = z
 
 const CompleteTenantOnboardingBodySchema = z
   .object({
+    pilotProfile: z.literal('us_auto_repair').optional(),
     tenantName: z.string().trim().min(2).max(120),
     billingEmail: z.string().trim().email().nullable().optional(),
     timezone: z.string().trim().min(1).max(80).optional(),
@@ -66,6 +67,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     const parsed = CompleteTenantOnboardingBodySchema.parse(await readJsonBody(request));
     const payload = {
       tenantName: parsed.tenantName,
+      ...(parsed.pilotProfile !== undefined ? { pilotProfile: parsed.pilotProfile } : {}),
       ...(parsed.billingEmail !== undefined ? { billingEmail: parsed.billingEmail } : {}),
       ...(parsed.timezone !== undefined ? { timezone: parsed.timezone } : {}),
       ...(parsed.businessType !== undefined ? { businessType: parsed.businessType } : {}),

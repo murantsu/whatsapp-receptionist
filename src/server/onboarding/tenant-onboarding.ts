@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { AppError } from '@/lib/errors/app-error';
 import type { AuthenticatedUser } from '@/lib/auth/session';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { AUTO_REPAIR_PILOT } from '@/lib/pilot/auto-repair';
 
 export type OnboardingTenantProfile = {
   id: string;
@@ -18,6 +19,7 @@ export type OnboardingStatus = {
 };
 
 export type CompleteTenantOnboardingInput = {
+  pilotProfile?: 'us_auto_repair';
   tenantName: string;
   billingEmail?: string | null;
   timezone?: string;
@@ -63,7 +65,7 @@ type CreateTenantBundleInput = {
     name: string;
     slug: string;
     billingEmail: string;
-    country: 'IT';
+    country: 'IT' | 'US';
     timezone: string;
     businessType: string | null;
     trialEndsAt: string;
@@ -75,10 +77,10 @@ type CreateTenantBundleInput = {
     address: string | null;
     phone: string | null;
     email: string | null;
-    defaultLocale: 'it-IT';
+    defaultLocale: 'it-IT' | 'en-US';
     aiDisclosureEnabled: true;
     autoReplyEnabled: false;
-    voiceMessagesEnabled: true;
+    voiceMessagesEnabled: boolean;
     voiceRepliesEnabled: false;
     bookingMinLeadMinutes: 120;
     bookingSlotStepMinutes: 15;
@@ -292,6 +294,7 @@ function normalizeOnboardingPayload(input: {
   ipAddress: string | null;
   userAgent: string | null;
 }): CreateTenantBundleInput {
+  const isUsAutoRepairPilot = input.payload.pilotProfile === 'us_auto_repair';
   const tenantName = normalizeRequiredText(input.payload.tenantName, 'Tenant name', 120);
   const billingEmail = normalizeNullableEmail(
     input.payload.billingEmail ?? input.user.email,
@@ -310,9 +313,16 @@ function normalizeOnboardingPayload(input: {
       name: tenantName,
       slug: makeTenantSlug(tenantName),
       billingEmail,
-      country: 'IT',
-      timezone: normalizeTimezone(input.payload.timezone ?? 'Europe/Rome'),
-      businessType: normalizeNullableText(input.payload.businessType, 'Business type', 80),
+      country: isUsAutoRepairPilot ? AUTO_REPAIR_PILOT.country : 'IT',
+      timezone: normalizeTimezone(
+        input.payload.timezone ??
+          (isUsAutoRepairPilot ? AUTO_REPAIR_PILOT.defaultTimezone : 'Europe/Rome'),
+      ),
+      businessType: normalizeNullableText(
+        input.payload.businessType ?? (isUsAutoRepairPilot ? AUTO_REPAIR_PILOT.businessType : null),
+        'Business type',
+        80,
+      ),
       trialEndsAt: addDays(input.now, 14).toISOString(),
     },
     config: {
@@ -326,10 +336,10 @@ function normalizeOnboardingPayload(input: {
       address: normalizeNullableText(input.payload.address, 'Address', 240),
       phone: normalizeNullableText(input.payload.phone, 'Phone', 40),
       email: normalizeNullableEmail(input.payload.email ?? billingEmail, 'Studio email'),
-      defaultLocale: 'it-IT',
+      defaultLocale: isUsAutoRepairPilot ? AUTO_REPAIR_PILOT.locale : 'it-IT',
       aiDisclosureEnabled: true,
       autoReplyEnabled: false,
-      voiceMessagesEnabled: true,
+      voiceMessagesEnabled: isUsAutoRepairPilot ? false : true,
       voiceRepliesEnabled: false,
       bookingMinLeadMinutes: 120,
       bookingSlotStepMinutes: 15,
@@ -340,7 +350,7 @@ function normalizeOnboardingPayload(input: {
       elevenlabsTtsModel: 'eleven_flash_v2_5',
       humanEscalationEmail: billingEmail,
     },
-    services: normalizeServices(input.payload.services),
+    services: normalizeServices(input.payload.services, isUsAutoRepairPilot),
     businessHours: normalizeBusinessHours(input.payload.businessHours),
     audit: {
       ipAddress: input.ipAddress,
@@ -351,16 +361,24 @@ function normalizeOnboardingPayload(input: {
 
 function normalizeServices(
   services: CompleteTenantOnboardingInput['services'],
+  isUsAutoRepairPilot = false,
 ): NormalizedOnboardingService[] {
   const normalized =
     services && services.length > 0
       ? services
       : [
-          {
-            name: 'Prima visita',
-            durationMinutes: 30,
-            active: true,
-          },
+          isUsAutoRepairPilot
+            ? {
+                name: 'Auto repair appointment',
+                description: 'General service request or vehicle concern intake',
+                durationMinutes: 60,
+                active: true,
+              }
+            : {
+                name: 'Prima visita',
+                durationMinutes: 30,
+                active: true,
+              },
         ];
 
   if (normalized.length > 20) {

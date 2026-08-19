@@ -213,6 +213,32 @@ describe('WhatsAppWebhookService', () => {
     expect(repository.outboxJobs).toHaveLength(0);
   });
 
+  it('keeps en-US pilot voice input disabled and asks for text', async () => {
+    const repository = new FakeWhatsAppWebhookRepository();
+    repository.tenants.set('phone_123', {
+      integrationId: 'integration_1',
+      tenantId: 'tenant_1',
+    });
+    repository.tenantConfigs.set('tenant_1', {
+      assistantName: 'Shop Assistant',
+      aiDisclosureEnabled: true,
+      autoReplyEnabled: true,
+      defaultLocale: 'en-US',
+      // The product-level en-US pilot gate remains authoritative even if a stale row says true.
+      voiceMessagesEnabled: true,
+    });
+    const service = new WhatsAppWebhookService(repository);
+
+    await service.processPayload(audioPayload('wamid.voice-disabled'), context);
+
+    expect(repository.voiceJobs).toHaveLength(0);
+    expect(repository.messageAnalyses[0]).toMatchObject({
+      metadata: { voiceInput: { enabled: false, action: 'text_requested' } },
+    });
+    expect(repository.outboundMessages[0]?.content).toContain('send your request as a text');
+    expect(repository.outboxJobs).toHaveLength(1);
+  });
+
   it('persists opt-out keywords without treating appointment cancellation as opt-out', async () => {
     const repository = new FakeWhatsAppWebhookRepository();
     repository.tenants.set('phone_123', {
@@ -264,6 +290,32 @@ describe('WhatsAppWebhookService', () => {
       },
     });
     expect(repository.outboxJobs).toHaveLength(1);
+  });
+
+  it('supports en-US unsubscribe wording without confusing appointment cancellation', async () => {
+    const repository = new FakeWhatsAppWebhookRepository();
+    repository.tenants.set('phone_123', {
+      integrationId: 'integration_1',
+      tenantId: 'tenant_1',
+    });
+    repository.tenantConfigs.set('tenant_1', {
+      assistantName: 'Shop Assistant',
+      aiDisclosureEnabled: true,
+      autoReplyEnabled: true,
+      defaultLocale: 'en-US',
+      voiceMessagesEnabled: false,
+    });
+    const service = new WhatsAppWebhookService(repository, { autoReplyEnabled: true });
+
+    await service.processPayload(textPayload('wamid.remove-me', 'remove me'), context);
+    await service.processPayload(
+      textPayload('wamid.cancel-en', 'cancel my appointment tomorrow'),
+      context,
+    );
+
+    expect(repository.persistedOptOuts).toHaveLength(1);
+    expect(repository.outboundMessages[0]?.content).toContain('unsubscribed');
+    expect(repository.messageAnalyses[1]).toMatchObject({ intent: 'cancellation_request' });
   });
 });
 

@@ -1511,3 +1511,28 @@ Verification on Node.js 22.23.2:
 - Official local Supabase pgTAP execution remains pending because Docker/Podman is unavailable on this workstation; CI coverage was added and must be green before Phase 2.
 
 Detailed Japanese handoff: `PHASE1_RESULT.md`.
+
+## 2026-08-19 - Phase 2: en-US Auto Repair Pilot - Codex
+
+Scope was limited to P0-5 through P0-7 on branch `agent/phase2-auto-repair-pilot`, based on the green Phase 1 commit `23d709d`. Phase 2 changes are for `murantsu/whatsapp-receptionist` only; no upstream Hiberius PR is permitted.
+
+Implemented:
+
+- Extended the existing intent, domain reply and escalation pipeline for grounded English FAQ answers, conservative fallback, explicit human requests and auto-repair safety escalation. The assistant may not diagnose vehicle faults, assert drivability, or invent services, prices, hours or inventory.
+- Extended the existing booking extractor and bridge for en-US dates/times, US numeric-date clarification, staged vehicle/customer intake, create/reschedule/cancel, tenant timezone use, and strict Google Calendar confirmation. Calendar failure, timeout, auth error, conflict or missing configuration never produces a confirmation and instead creates a human handoff.
+- Added an en-US product gate that keeps voice input disabled, plus English STOP/unsubscribe handling that does not confuse appointment cancellation with messaging opt-out.
+- Reused the existing settings APIs to add English Google Calendar and handoff-email screens. Translated the pilot's principal operator screens and hid billing, voice, team, agency and other out-of-scope links without deleting their implementations.
+- Added a US Auto Repair onboarding profile while preserving the legacy Italian defaults.
+
+Verification on Node.js 22.23.2:
+
+- Full suite: 84 files and 619 tests passed.
+- Phase 1 PostgreSQL tenant-isolation suite: 16/16 passed.
+- TypeScript passed. ESLint passed with 0 errors and 3 pre-existing warnings. RLS lint passed for 22 tables.
+- Full and production npm audits report 0 vulnerabilities.
+- Next.js compiled and generated all 94 pages, then hit the known Windows output-trace `EPERM C:\Users\Users` failure assigned to P0-8.
+- No real WhatsApp, Google Calendar, Anthropic, Resend or other staging account was used, as required; that remains P0-9.
+- The first Playwright CI run caught stale Italian expectations for the now-English sign-in screen and an unintended English generic-error leak into legacy Contact/Register pages. The expectations were updated, and `useApiForm` now defaults to `it-IT` while pilot forms opt into `en-US` explicitly.
+- Fork PR #2 finished green on all 7 GitHub Actions jobs, including 56/56 Playwright tests, Linux production build, official Supabase tenant isolation, coverage, dependency audit and secret scan.
+
+Detailed Japanese handoff: `PHASE2_RESULT.md`.

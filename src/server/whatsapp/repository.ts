@@ -55,6 +55,7 @@ export type TenantMessagingConfig = {
   aiDisclosureEnabled: boolean;
   autoReplyEnabled: boolean;
   defaultLocale: string;
+  voiceMessagesEnabled?: boolean;
 };
 
 export type UpdateInboundMessageAnalysisInput = {
@@ -424,7 +425,9 @@ export class SupabaseWhatsAppWebhookRepository implements WhatsAppWebhookReposit
   async getTenantMessagingConfig(tenantId: string): Promise<TenantMessagingConfig> {
     const { data, error } = await this.supabase
       .from('tenant_config')
-      .select('assistant_name, ai_disclosure_enabled, auto_reply_enabled, default_locale')
+      .select(
+        'assistant_name, ai_disclosure_enabled, auto_reply_enabled, default_locale, voice_messages_enabled',
+      )
       .eq('tenant_id', tenantId)
       .maybeSingle();
 
@@ -437,6 +440,7 @@ export class SupabaseWhatsAppWebhookRepository implements WhatsAppWebhookReposit
       aiDisclosureEnabled: (data?.ai_disclosure_enabled as boolean | undefined) ?? true,
       autoReplyEnabled: (data?.auto_reply_enabled as boolean | undefined) ?? false,
       defaultLocale: (data?.default_locale as string | undefined) ?? 'it-IT',
+      voiceMessagesEnabled: (data?.voice_messages_enabled as boolean | undefined) ?? true,
     };
   }
 

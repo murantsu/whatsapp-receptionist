@@ -8,7 +8,7 @@ import { logger } from '@/lib/logging/logger';
 import { createTenantSettingsService } from '@/server/settings/tenant-settings';
 
 export const metadata: Metadata = {
-  title: 'Servizi e listino · Impostazioni · Ambrogio.ai',
+  title: 'Services · Settings · Ambrogio.ai',
 };
 
 // Il listino dipende dalla sessione: non deve finire in cache statica.
@@ -52,14 +52,14 @@ export default async function ServicesSettingsPage() {
         <div className="stack stack-2">
           <span className="eyebrow">
             <Link href="/settings" className="btn-link">
-              Impostazioni
+              Settings
             </Link>{' '}
-            / Studio
+            / Shop
           </span>
-          <h1>Servizi e listino</h1>
+          <h1>Services</h1>
           <p className="muted">
-            Cosa offri, quanto dura e quanto costa. Ambrogio propone solo i servizi attivi e riserva
-            in agenda esattamente la durata indicata.
+            Configure only services this shop provides, with duration and verified pricing when
+            appropriate.
           </p>
         </div>
       </div>
@@ -71,18 +71,17 @@ export default async function ServicesSettingsPage() {
         />
       ) : (
         <section className="card stack stack-3">
-          <h2 style={{ fontSize: 'var(--text-xl)' }}>Listino non leggibile</h2>
+          <h2 style={{ fontSize: 'var(--text-xl)' }}>Services could not be loaded</h2>
           <p className="muted">
-            Non siamo riusciti a recuperare i servizi salvati. Non significa che siano stati persi:
-            è la lettura ad aver fallito. Ricarica tra poco, e se il problema resta scrivici dalla
-            pagina contatti.
+            Saved services were not changed. Reload the page and contact pilot support if the
+            problem continues.
           </p>
           <div className="row" style={{ gap: 'var(--space-3)' }}>
             <Link href="/settings/services" className="btn btn-secondary btn-sm">
-              Riprova
+              Retry
             </Link>
             <Link href="/contact" className="btn btn-ghost btn-sm">
-              Contatta il supporto
+              Contact support
             </Link>
           </div>
         </section>

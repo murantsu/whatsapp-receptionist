@@ -328,6 +328,7 @@ describe('SupabaseWhatsAppWebhookRepository.getTenantMessagingConfig', () => {
       aiDisclosureEnabled: false,
       autoReplyEnabled: true,
       defaultLocale: 'en-GB',
+      voiceMessagesEnabled: true,
     });
   });
 
@@ -345,6 +346,7 @@ describe('SupabaseWhatsAppWebhookRepository.getTenantMessagingConfig', () => {
       aiDisclosureEnabled: true,
       autoReplyEnabled: false,
       defaultLocale: 'it-IT',
+      voiceMessagesEnabled: true,
     });
   });
 });
