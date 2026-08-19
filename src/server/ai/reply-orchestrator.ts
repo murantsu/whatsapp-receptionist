@@ -13,6 +13,7 @@ import {
 } from '@/server/ai/context';
 import { LlmDomainReplyGenerator, type DomainReplyGenerator } from '@/server/ai/domain-reply';
 import { FallbackIntentClassifier, LlmIntentClassifier } from '@/server/ai/llm-intent-classifier';
+import { isEnUsLocale } from '@/lib/pilot/auto-repair';
 
 export type ReplyOrchestratorInput = {
   tenantId?: string;
@@ -38,27 +39,49 @@ export class ReplyOrchestrator {
   ) {}
 
   async createReply(input: ReplyOrchestratorInput): Promise<ReplyPlan> {
-    const classification = await this.classifier.classify({
+    let classification = await this.classifier.classify({
       text: input.text,
       ...(input.locale !== undefined ? { locale: input.locale } : {}),
     });
     const context = await this.loadContextSafely(input);
+    const enUsSafetyPlan = createEnUsSafetyPlan(input, classification, context);
+
+    if (enUsSafetyPlan) {
+      return enUsSafetyPlan;
+    }
+
     const generatedReply = await this.generateDomainReplySafely(input, classification, context);
 
     if (generatedReply) {
+      if (generatedReply.handoffReason) {
+        classification = {
+          intent: 'human_handoff',
+          confidence: Math.max(classification.confidence, 0.9),
+          matchedSignals: [...classification.matchedSignals, 'domain_reply_handoff'],
+          ...(classification.aiUsage !== undefined ? { aiUsage: classification.aiUsage } : {}),
+        };
+      }
+
       return {
         ...generatedReply,
         replyText: generatedReply.replyText
           ? withDisclosure(generatedReply.replyText, {
               assistantName: input.assistantName,
               aiDisclosureEnabled: input.aiDisclosureEnabled,
+              locale: input.locale,
             })
           : null,
         classification,
       };
     }
 
-    const body = createReplyBody(classification.intent);
+    const groundedFallback = createGroundedKnowledgeFallback(input, classification, context);
+
+    if (groundedFallback) {
+      return groundedFallback;
+    }
+
+    const body = createReplyBody(classification.intent, input.locale);
 
     return {
       shouldReply: body !== null,
@@ -68,6 +91,7 @@ export class ReplyOrchestrator {
           : withDisclosure(body, {
               assistantName: input.assistantName,
               aiDisclosureEnabled: input.aiDisclosureEnabled,
+              locale: input.locale,
             }),
       classification,
       metadata: {
@@ -83,7 +107,7 @@ export class ReplyOrchestrator {
     input: ReplyOrchestratorInput,
     classification: IntentClassification,
     context: AiRuntimeContext | null,
-  ): Promise<Omit<ReplyPlan, 'classification'> | null> {
+  ): Promise<(Omit<ReplyPlan, 'classification'> & { handoffReason?: string | null }) | null> {
     if (!this.domainReplyGenerator) {
       return null;
     }
@@ -97,9 +121,22 @@ export class ReplyOrchestrator {
         ...(context !== null ? { context } : {}),
       });
     } catch {
+      const groundedFallback = createGroundedKnowledgeFallback(input, classification, context);
+
+      if (groundedFallback) {
+        const { classification: _classification, ...reply } = groundedFallback;
+        return {
+          ...reply,
+          metadata: {
+            ...(reply.metadata ?? {}),
+            aiEngine: { provider: 'rule_based', fallbackReason: 'domain_reply_failed' },
+          },
+        };
+      }
+
       return {
-        shouldReply: createReplyBody(classification.intent) !== null,
-        replyText: createReplyBody(classification.intent),
+        shouldReply: createReplyBody(classification.intent, input.locale) !== null,
+        replyText: createReplyBody(classification.intent, input.locale),
         metadata: {
           aiEngine: {
             provider: 'rule_based',
@@ -130,6 +167,41 @@ export class ReplyOrchestrator {
   }
 }
 
+function createGroundedKnowledgeFallback(
+  input: ReplyOrchestratorInput,
+  classification: IntentClassification,
+  context: AiRuntimeContext | null,
+): ReplyPlan | null {
+  if (
+    !isEnUsLocale(input.locale) ||
+    !context?.knowledgeBase[0] ||
+    !['pricing_question', 'opening_hours_question', 'other'].includes(classification.intent)
+  ) {
+    return null;
+  }
+
+  const entry = context.knowledgeBase[0];
+  const verifiedContent = entry.content.replace(/\s+/g, ' ').trim().slice(0, 700);
+
+  if (!verifiedContent) {
+    return null;
+  }
+
+  return {
+    shouldReply: true,
+    replyText: withDisclosure(verifiedContent, {
+      assistantName: input.assistantName,
+      aiDisclosureEnabled: input.aiDisclosureEnabled,
+      locale: input.locale,
+    }),
+    classification,
+    metadata: {
+      aiEngine: { provider: 'knowledge_base_fallback', knowledgeBaseId: entry.id },
+      aiContext: context.metadata,
+    },
+  };
+}
+
 export function createReplyOrchestrator(): ReplyOrchestrator {
   const fastClient = createAnthropicClientForModel(env.ANTHROPIC_MODEL_FAST);
   const primaryClient = createAnthropicClientForModel(env.ANTHROPIC_MODEL_PRIMARY);
@@ -147,7 +219,25 @@ export function createReplyOrchestrator(): ReplyOrchestrator {
   );
 }
 
-function createReplyBody(intent: IntentClassification['intent']): string | null {
+function createReplyBody(intent: IntentClassification['intent'], locale?: string): string | null {
+  if (isEnUsLocale(locale)) {
+    switch (intent) {
+      case 'booking_request':
+        return 'I can help schedule your service. Please share the service you need and your preferred day and time.';
+      case 'reschedule_request':
+        return 'I can help move your appointment. Please share which appointment you mean and the new day and time you prefer.';
+      case 'cancellation_request':
+        return 'I can help cancel your appointment. Please share the appointment day and time so I can identify it safely.';
+      case 'pricing_question':
+      case 'opening_hours_question':
+        return 'I do not have verified information for that question, so I have sent it to the shop for a human reply.';
+      case 'human_handoff':
+        return 'I have sent your request to the shop for a human reply.';
+      case 'other':
+        return 'Thanks for your message. I can help with shop FAQs, appointments, or getting a person involved.';
+    }
+  }
+
   switch (intent) {
     case 'booking_request':
       return 'Certo, ti aiuto a prenotare. Indicami servizio, giorno e fascia oraria che preferisci, cosi controllo la disponibilita.';
@@ -171,11 +261,89 @@ function withDisclosure(
   input: {
     assistantName: string;
     aiDisclosureEnabled: boolean;
+    locale?: string | undefined;
   },
 ): string {
   if (!input.aiDisclosureEnabled) {
     return body;
   }
 
-  return `Ciao, sono ${input.assistantName}, l'assistente AI dello studio. ${body}`;
+  return isEnUsLocale(input.locale)
+    ? `Hi, I'm ${input.assistantName}, the shop's AI receptionist. ${body}`
+    : `Ciao, sono ${input.assistantName}, l'assistente AI dello studio. ${body}`;
+}
+
+function createEnUsSafetyPlan(
+  input: ReplyOrchestratorInput,
+  classification: IntentClassification,
+  context: AiRuntimeContext | null,
+): ReplyPlan | null {
+  if (!isEnUsLocale(input.locale)) {
+    return null;
+  }
+
+  const greeting = /^(hi|hello|hey|good morning|good afternoon|good evening)[!.\s]*$/i.test(
+    input.text.trim(),
+  );
+  const lacksVerifiedKnowledge = !context || context.knowledgeBase.length === 0;
+  const needsVerifiedKnowledge =
+    classification.intent === 'pricing_question' ||
+    classification.intent === 'opening_hours_question' ||
+    classification.intent === 'other';
+  const lowConfidence = classification.confidence < 0.6;
+
+  if (greeting) {
+    const body = createReplyBody('other', input.locale)!;
+    return {
+      shouldReply: true,
+      replyText: withDisclosure(body, {
+        assistantName: input.assistantName,
+        aiDisclosureEnabled: input.aiDisclosureEnabled,
+        locale: input.locale,
+      }),
+      classification,
+      metadata: { aiEngine: { provider: 'rule_based' }, aiContext: context?.metadata ?? null },
+    };
+  }
+
+  if (
+    classification.intent === 'human_handoff' ||
+    lowConfidence ||
+    (needsVerifiedKnowledge && lacksVerifiedKnowledge)
+  ) {
+    const reason =
+      classification.intent === 'human_handoff'
+        ? 'human_handoff_intent'
+        : lowConfidence
+          ? 'ai_low_confidence'
+          : 'unverified_information';
+    const safeClassification: IntentClassification = {
+      intent: 'human_handoff',
+      confidence: Math.max(classification.confidence, 0.9),
+      matchedSignals: [...classification.matchedSignals, reason],
+      ...(classification.aiUsage !== undefined ? { aiUsage: classification.aiUsage } : {}),
+    };
+    const body =
+      reason === 'unverified_information'
+        ? 'I do not have verified shop information for that question, so I have sent it to the shop for a human reply.'
+        : reason === 'ai_low_confidence'
+          ? 'I am not confident I understood that correctly, so I have sent it to the shop for a human reply.'
+          : createReplyBody('human_handoff', input.locale)!;
+
+    return {
+      shouldReply: true,
+      replyText: withDisclosure(body, {
+        assistantName: input.assistantName,
+        aiDisclosureEnabled: input.aiDisclosureEnabled,
+        locale: input.locale,
+      }),
+      classification: safeClassification,
+      metadata: {
+        aiEngine: { provider: 'rule_based', handoffReason: reason },
+        aiContext: context?.metadata ?? null,
+      },
+    };
+  }
+
+  return null;
 }

@@ -2,21 +2,12 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
-  title: 'Impostazioni · Ambrogio.ai',
+  title: 'Settings · AI Receptionist',
 };
 
 interface SettingsLink {
   readonly href: string;
   readonly label: string;
-  /**
-   * `false` finché la pagina non esiste davvero nel router.
-   *
-   * L'elenco è nato come mappa del prodotto finito: quattordici voci su
-   * quindici puntavano a rotte mai create, quindi a un 404. Una voce marcata
-   * "In arrivo" dice la stessa cosa senza far sbattere l'utente contro un
-   * errore. Quando la pagina viene creata, si alza questo flag.
-   */
-  readonly available: boolean;
 }
 
 interface SettingsGroup {
@@ -27,46 +18,21 @@ interface SettingsGroup {
 
 const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   {
-    title: 'Studio',
-    description: 'Nome, settore, lingua, fuso orario.',
+    title: 'Shop operations',
+    description: 'Configure the appointment information customers can rely on.',
     links: [
-      { href: '/settings/profile', label: 'Profilo studio', available: false },
-      { href: '/settings/business-hours', label: 'Orari di apertura', available: true },
-      { href: '/settings/services', label: 'Servizi e listino', available: true },
-      { href: '/settings/team', label: 'Team e operatori', available: false },
+      { href: '/settings/business-hours', label: 'Business hours' },
+      { href: '/settings/services', label: 'Services' },
+      { href: '/knowledge', label: 'Knowledge Base / FAQ' },
     ],
   },
   {
-    title: 'Integrazioni',
-    description: 'Connetti i canali di comunicazione e gli strumenti che già usi.',
+    title: 'Pilot integrations',
+    description: 'Connect the single WhatsApp number and Google Calendar used by this shop.',
     links: [
-      { href: '/settings/whatsapp', label: 'WhatsApp Business', available: true },
-      { href: '/settings/calendar', label: 'Google Calendar', available: false },
-      { href: '/settings/voice', label: 'Voce ElevenLabs', available: false },
-      { href: '/settings/webhooks', label: 'Webhook custom', available: false },
-    ],
-  },
-  {
-    title: 'AI',
-    description: 'Personalità, prompt, knowledge base.',
-    links: [
-      { href: '/settings/personality', label: 'Tono e personalità', available: false },
-      { href: '/settings/knowledge', label: 'Knowledge base', available: false },
-      { href: '/settings/escalation', label: 'Regole di escalation', available: false },
-    ],
-  },
-  {
-    title: 'Account e sicurezza',
-    description: 'Piano, fatturazione, privacy, GDPR.',
-    links: [
-      { href: '/billing', label: 'Piano e fatturazione', available: true },
-      { href: '/settings/security', label: 'Sicurezza', available: false },
-      {
-        href: '/settings/data-export',
-        label: 'Esporta i tuoi dati (GDPR Art. 15)',
-        available: false,
-      },
-      { href: '/settings/danger-zone', label: 'Cancella account', available: false },
+      { href: '/settings/whatsapp', label: 'WhatsApp Business' },
+      { href: '/settings/calendar', label: 'Google Calendar' },
+      { href: '/settings/handoff', label: 'Handoff email' },
     ],
   },
 ];
@@ -84,11 +50,11 @@ export default function SettingsPage() {
     <>
       <div className="dashboard-header">
         <div className="stack stack-2">
-          <span className="eyebrow">Impostazioni</span>
-          <h1>Configura il tuo studio</h1>
+          <span className="eyebrow">Settings</span>
+          <h1>Configure your auto repair shop</h1>
           <p className="muted">
-            Tutto quello che riguarda Ambrogio: come parla, come prenota, come ti notifica. Le voci
-            marcate «In arrivo» non sono ancora attive.
+            This managed pilot uses one location, one appointment calendar, and one operator handoff
+            email. Billing and other non-pilot features are managed by the pilot team.
           </p>
         </div>
       </div>
@@ -105,24 +71,17 @@ export default function SettingsPage() {
             <ul style={{ listStyle: 'none', padding: 0 }} className="stack stack-2">
               {group.links.map((link) => (
                 <li key={link.href}>
-                  {link.available ? (
-                    <Link
-                      href={link.href}
-                      className="row-between"
-                      style={{
-                        ...ROW_STYLE,
-                        transition: 'background var(--duration-normal) var(--ease-out)',
-                      }}
-                    >
-                      <span>{link.label}</span>
-                      <span aria-hidden="true">→</span>
-                    </Link>
-                  ) : (
-                    <div className="row-between" style={{ ...ROW_STYLE, opacity: 0.65 }}>
-                      <span className="muted">{link.label}</span>
-                      <span className="badge badge-neutral">In arrivo</span>
-                    </div>
-                  )}
+                  <Link
+                    href={link.href}
+                    className="row-between"
+                    style={{
+                      ...ROW_STYLE,
+                      transition: 'background var(--duration-normal) var(--ease-out)',
+                    }}
+                  >
+                    <span>{link.label}</span>
+                    <span aria-hidden="true">→</span>
+                  </Link>
                 </li>
               ))}
             </ul>

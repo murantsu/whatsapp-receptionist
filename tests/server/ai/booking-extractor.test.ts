@@ -17,6 +17,10 @@ function extract(text: string, timezone = 'UTC') {
   return extractor.extract({ text, now, timezone });
 }
 
+function extractEnglish(text: string, timezone = 'America/New_York') {
+  return extractor.extract({ text, now, timezone, locale: 'en-US' });
+}
+
 describe('RuleBasedBookingRequestExtractor', () => {
   it('extracts service, relative date and afternoon preference', async () => {
     const result = await extract('Vorrei prenotare una igiene domani pomeriggio');
@@ -80,6 +84,48 @@ describe('RuleBasedBookingRequestExtractor', () => {
       startHour: 8,
       endHour: 13,
     });
+  });
+});
+
+describe('en-US auto repair booking extraction', () => {
+  it.each([
+    ['tomorrow afternoon', '2026-04-28T16:00:00.000Z', '2026-04-28T21:00:00.000Z'],
+    ['next Friday at 3 PM', '2026-05-01T19:00:00.000Z', '2026-05-01T20:00:00.000Z'],
+    ['Friday morning', '2026-05-01T12:00:00.000Z', '2026-05-01T16:00:00.000Z'],
+    [
+      'move my appointment to Friday at 11 AM',
+      '2026-05-01T15:00:00.000Z',
+      '2026-05-01T16:00:00.000Z',
+    ],
+  ])('understands %s in the tenant timezone', async (text, from, to) => {
+    const result = await extractEnglish(text);
+
+    expect(result.datePreference?.from.toISOString()).toBe(from);
+    expect(result.datePreference?.to.toISOString()).toBe(to);
+  });
+
+  it('does not guess an ambiguous numeric US date', async () => {
+    const result = await extractEnglish('Can I book an oil change on 03/04?');
+
+    expect(result.datePreference).toBeNull();
+    expect(result.signals).toContain('date_ambiguous_numeric');
+  });
+
+  it('collects auto repair details already supplied by the customer', async () => {
+    const result = await extractEnglish(
+      'My name is Alex Smith, 555-123-4567. My 2020 Toyota Camry is shaking. I need an oil change tomorrow afternoon and it is urgent.',
+    );
+
+    expect(result).toMatchObject({
+      customerName: 'Alex Smith',
+      customerPhone: '5551234567',
+      vehicleMake: 'Toyota',
+      vehicleModel: 'Camry',
+      vehicleYear: 2020,
+      serviceQuery: 'oil change',
+      urgency: 'urgent',
+    });
+    expect(result.problemSymptoms).toContain('shaking');
   });
 });
 

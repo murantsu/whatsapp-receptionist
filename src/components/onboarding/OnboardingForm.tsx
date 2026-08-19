@@ -23,7 +23,7 @@ export function OnboardingForm({
 }: OnboardingFormProps) {
   const { state, onSubmit } = useApiForm({
     endpoint: '/api/onboarding/tenant',
-    successMessage: 'Studio configurato.',
+    successMessage: 'Your shop is configured.',
     redirectTo: '/dashboard',
     // I nomi dei campi del form non coincidono con lo schema dell'API
     // (`business_name` → `tenantName`, `vertical` → `businessType`): la
@@ -31,8 +31,9 @@ export function OnboardingForm({
     // `.strict()` rifiuta il payload.
     buildBody: (formData) => ({
       tenantName: String(formData.get('business_name') ?? ''),
-      businessType: formData.get('vertical') ? String(formData.get('vertical')) : null,
-      timezone: String(formData.get('timezone') ?? 'Europe/Rome'),
+      pilotProfile: 'us_auto_repair',
+      businessType: 'auto_repair_shop',
+      timezone: String(formData.get('timezone') ?? 'America/New_York'),
     }),
   });
 
@@ -44,7 +45,7 @@ export function OnboardingForm({
 
       <div className="field">
         <label htmlFor="business_name" className="label">
-          Nome studio o azienda
+          Shop name
         </label>
         <input
           id="business_name"
@@ -54,7 +55,7 @@ export function OnboardingForm({
           required
           minLength={2}
           maxLength={120}
-          placeholder="Studio Dentistico Rossi"
+          placeholder="Main Street Auto Repair"
           className="input"
           defaultValue={prefilledBusinessName}
           disabled={isSubmitting}
@@ -63,7 +64,7 @@ export function OnboardingForm({
 
       <div className="field">
         <label htmlFor="vertical" className="label">
-          Settore
+          Business type
         </label>
         <select
           id="vertical"
@@ -74,7 +75,7 @@ export function OnboardingForm({
           disabled={isSubmitting}
         >
           <option value="" disabled>
-            Seleziona il settore
+            Select business type
           </option>
           {verticals.map((vertical) => (
             <option key={vertical.value} value={vertical.value}>
@@ -86,14 +87,14 @@ export function OnboardingForm({
 
       <div className="field">
         <label htmlFor="timezone" className="label">
-          Fuso orario
+          Time zone
         </label>
         <select
           id="timezone"
           name="timezone"
           required
           className="select"
-          defaultValue="Europe/Rome"
+          defaultValue="America/New_York"
           disabled={isSubmitting}
         >
           {timezones.map((timezone) => (
@@ -113,13 +114,13 @@ export function OnboardingForm({
           color: 'var(--color-text-secondary)',
         }}
       >
-        <strong>P.IVA e codice SDI</strong> li chiediamo dopo, alla prima fattura. Adesso bastano i
-        dati base: 30 secondi.
+        This managed pilot supports one United States auto repair shop, one staff member, and one
+        Google Calendar. Voice messages and self-service billing are disabled.
       </p>
 
       <div className="row" style={{ gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
         <button type="submit" className="btn btn-primary btn-lg" disabled={isSubmitting}>
-          {isSubmitting ? 'Salvataggio…' : 'Continua →'}
+          {isSubmitting ? 'Saving…' : 'Continue →'}
         </button>
       </div>
     </form>

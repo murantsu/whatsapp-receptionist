@@ -92,14 +92,14 @@ describe('parseDurationMinutes', () => {
 describe('centsToPriceInput / formatPrice / formatDuration', () => {
   it('renders cents back into an editable euro value', () => {
     expect(centsToPriceInput(null)).toBe('');
-    expect(centsToPriceInput(3500)).toBe('35,00');
-    expect(centsToPriceInput(5)).toBe('0,05');
-    expect(centsToPriceInput(3550)).toBe('35,50');
+    expect(centsToPriceInput(3500)).toBe('35.00');
+    expect(centsToPriceInput(5)).toBe('0.05');
+    expect(centsToPriceInput(3550)).toBe('35.50');
   });
 
   it('says explicitly when no price is set instead of showing zero', () => {
-    expect(formatPrice(null)).toBe('Prezzo non indicato');
-    expect(formatPrice(3500)).toContain('35,00');
+    expect(formatPrice(null)).toBe('Price not listed');
+    expect(formatPrice(3500)).toBe('$35.00');
   });
 
   it('renders durations longer than an hour in hours and minutes', () => {
@@ -115,7 +115,7 @@ describe('toServiceDraft', () => {
       name: 'Pulizia dentale',
       description: 'Igiene professionale',
       durationMinutes: '45',
-      price: '80,00',
+      price: '80.00',
       active: true,
     });
   });
@@ -295,7 +295,7 @@ describe('service requests', () => {
 
     expect(result).toEqual({
       ok: false,
-      message: 'Non hai i permessi per completare questa operazione.',
+      message: 'You do not have permission to complete this operation.',
     });
   });
 
@@ -317,7 +317,7 @@ describe('service requests', () => {
 
     expect(result).toEqual({
       ok: false,
-      message: 'Non siamo riusciti a creare il servizio. Riprova tra poco.',
+      message: 'We could not create the service. Please try again shortly.',
     });
   });
 });

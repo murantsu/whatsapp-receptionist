@@ -5,7 +5,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ReplyOrchestrator, type ReplyOrchestratorInput } from '@/server/ai/reply-orchestrator';
-import type { IntentClassification, IntentClassifier } from '@/server/ai/intent-router';
+import {
+  RuleBasedIntentClassifier,
+  type IntentClassification,
+  type IntentClassifier,
+} from '@/server/ai/intent-router';
 import type { DomainReplyGenerator } from '@/server/ai/domain-reply';
 import type { AiContextProvider, AiRuntimeContext } from '@/server/ai/context';
 
@@ -98,6 +102,94 @@ describe('ReplyOrchestrator.createReply (rule-based fallback)', () => {
     expect(classifier.classify).toHaveBeenCalledTimes(1);
     const call = (classifier.classify as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(call).toEqual({ text: 'ciao' });
+  });
+});
+
+describe('ReplyOrchestrator en-US pilot safety', () => {
+  it('routes an explicit human request to handoff', async () => {
+    const plan = await new ReplyOrchestrator(new RuleBasedIntentClassifier()).createReply({
+      ...baseInput,
+      text: 'I need to speak with a person',
+      locale: 'en-US',
+    });
+
+    expect(plan.classification.intent).toBe('human_handoff');
+    expect(plan.replyText).toContain('human reply');
+  });
+
+  it('does not invent an answer when no verified FAQ exists', async () => {
+    const plan = await new ReplyOrchestrator(fakeClassifier('pricing_question')).createReply({
+      ...baseInput,
+      text: 'How much is a transmission replacement?',
+      locale: 'en-US',
+    });
+
+    expect(plan.classification.intent).toBe('human_handoff');
+    expect(plan.classification.matchedSignals).toContain('unverified_information');
+    expect(plan.replyText).toContain('do not have verified shop information');
+  });
+
+  it('answers from a verified FAQ snippet when the LLM is unavailable', async () => {
+    const context: AiRuntimeContext = {
+      conversationMessages: [],
+      activePrompt: null,
+      knowledgeBase: [
+        {
+          id: 'kb_hours',
+          title: 'Saturday hours',
+          content: 'The shop is open Saturdays from 8 AM to noon.',
+          category: 'hours',
+          score: 0.92,
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      metadata: {
+        loaded: true,
+        promptKey: 'domain_reply',
+        messageCount: 0,
+        knowledgeBaseCount: 1,
+        knowledgeBaseIds: ['kb_hours'],
+        activePromptId: null,
+        activePromptVersion: null,
+      },
+    };
+    const orchestrator = new ReplyOrchestrator(
+      fakeClassifier('opening_hours_question'),
+      null,
+      fakeContextProvider(vi.fn(async () => context)),
+    );
+    const plan = await orchestrator.createReply({
+      ...baseInput,
+      tenantId: 'tenant_1',
+      conversationId: 'conversation_1',
+      text: 'Are you open Saturday?',
+      locale: 'en-US',
+      aiDisclosureEnabled: false,
+    });
+
+    expect(plan.classification.intent).toBe('opening_hours_question');
+    expect(plan.replyText).toBe('The shop is open Saturdays from 8 AM to noon.');
+    expect(plan.metadata).toMatchObject({
+      aiEngine: { provider: 'knowledge_base_fallback', knowledgeBaseId: 'kb_hours' },
+    });
+  });
+
+  it('hands low-confidence classification to a person', async () => {
+    const classifier: IntentClassifier = {
+      classify: vi.fn(async () => ({
+        intent: 'other' as const,
+        confidence: 0.3,
+        matchedSignals: [],
+      })),
+    };
+    const plan = await new ReplyOrchestrator(classifier).createReply({
+      ...baseInput,
+      text: 'something unusual',
+      locale: 'en-US',
+    });
+
+    expect(plan.classification.intent).toBe('human_handoff');
+    expect(plan.classification.matchedSignals).toContain('ai_low_confidence');
   });
 });
 

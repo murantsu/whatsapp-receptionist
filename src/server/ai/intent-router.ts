@@ -44,7 +44,7 @@ type IntentRule = {
   minMatches?: number;
 };
 
-const intentRules: IntentRule[] = [
+const italianIntentRules: IntentRule[] = [
   {
     intent: 'reschedule_request',
     confidence: 0.89,
@@ -88,9 +88,53 @@ const intentRules: IntentRule[] = [
   },
 ];
 
+const englishIntentRules: IntentRule[] = [
+  {
+    intent: 'reschedule_request',
+    confidence: 0.92,
+    minMatches: 2,
+    signals: [/\b(move|reschedule|change|shift)\b/, /\b(appointment|booking|service visit)\b/],
+  },
+  {
+    intent: 'cancellation_request',
+    confidence: 0.93,
+    minMatches: 2,
+    signals: [/\b(cancel|cancellation|call off)\b/, /\b(appointment|booking|service visit)\b/],
+  },
+  {
+    intent: 'pricing_question',
+    confidence: 0.86,
+    signals: [/\b(price|pricing|cost|costs|rate|rates|how much|estimate)\b/],
+  },
+  {
+    intent: 'opening_hours_question',
+    confidence: 0.86,
+    signals: [/\b(hours|open|opened|opening|close|closed|closing|address|location|located)\b/],
+  },
+  {
+    intent: 'human_handoff',
+    confidence: 0.94,
+    signals: [
+      /\b(speak|talk|call|connect|transfer)\b.{0,28}\b(person|human|someone|manager|advisor|representative|shop)\b/,
+      /\b(can someone call me|have someone call me|call me back|human please)\b/,
+    ],
+  },
+  {
+    intent: 'booking_request',
+    confidence: 0.91,
+    signals: [
+      /\b(book|schedule|make|set up|need|want)\b.{0,32}\b(appointment|service|inspection|repair|oil change|tire rotation)\b/,
+      /\b(appointment|availability|available|time slot)\b/,
+    ],
+  },
+];
+
 export class RuleBasedIntentClassifier implements IntentClassifier {
   async classify(input: IntentClassificationInput): Promise<IntentClassification> {
     const text = normalizeForMatching(input.text);
+    const intentRules = input.locale?.toLowerCase().startsWith('en')
+      ? englishIntentRules
+      : italianIntentRules;
 
     if (!text) {
       return {

@@ -28,7 +28,7 @@ export interface WhatsAppConnectionView {
 
 interface WhatsAppConnectionFormProps {
   readonly status: WhatsAppConnectionView;
-  /** Solo owner e admin possono scrivere: l'API rifiuta gli altri con 403. */
+  /** Only owners and admins can write; the API rejects other roles with 403. */
   readonly canManage: boolean;
 }
 
@@ -40,9 +40,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
 
   const { state, onSubmit } = useApiForm({
     endpoint: ENDPOINT,
-    successMessage: isConnected
-      ? 'Numero aggiornato. Ambrogio risponde su questo canale.'
-      : 'Numero collegato. Ambrogio risponde su questo canale.',
+    successMessage: isConnected ? 'WhatsApp number updated.' : 'WhatsApp number connected.',
     buildBody: (formData) => ({
       phoneNumberId: String(formData.get('phoneNumberId') ?? ''),
       displayPhoneNumber: String(formData.get('displayPhoneNumber') ?? ''),
@@ -71,7 +69,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
     } catch {
       setDisconnectState({
         status: 'error',
-        message: 'Connessione non riuscita. Controlla la rete e riprova.',
+        message: 'The request failed. Check your connection and try again.',
       });
       return;
     }
@@ -84,7 +82,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
     setIsConfirmingDisconnect(false);
     setDisconnectState({
       status: 'success',
-      message: 'Numero scollegato. I messaggi in arrivo non verranno più gestiti.',
+      message: 'WhatsApp number disconnected. Incoming messages will no longer be handled.',
     });
   }, []);
 
@@ -96,9 +94,9 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
       <section className="card stack stack-4">
         <div className="row-between" style={{ gap: 'var(--space-4)' }}>
           <div className="stack stack-2">
-            <span className="eyebrow">Stato del canale</span>
+            <span className="eyebrow">Channel status</span>
             <h2 style={{ fontSize: 'var(--text-xl)' }}>
-              {isConnected ? 'Numero collegato' : 'Nessun numero collegato'}
+              {isConnected ? 'Number connected' : 'No number connected'}
             </h2>
           </div>
           <span className={isConnected ? 'badge badge-success' : 'badge badge-neutral'}>
@@ -109,28 +107,27 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
         {isConnected ? (
           <dl className="stack stack-3" style={{ margin: 0 }}>
             <DetailRow
-              label="Numero visualizzato"
-              value={status.displayPhoneNumber ?? 'Non impostato'}
+              label="Display number"
+              value={status.displayPhoneNumber ?? 'Not set'}
               isMono={status.displayPhoneNumber !== null}
             />
             <DetailRow label="Phone number ID" value={status.phoneNumberId ?? '—'} isMono />
             <DetailRow
               label="API key"
-              value={status.hasApiKey ? 'Salvata e cifrata' : 'Mancante: il canale non può inviare'}
+              value={status.hasApiKey ? 'Saved and encrypted' : 'Missing: the channel cannot send'}
             />
-            <DetailRow label="Integrazione creata il" value={formatDate(status.connectedAt)} />
+            <DetailRow label="Connected on" value={formatDate(status.connectedAt)} />
           </dl>
         ) : (
           <div className="stack stack-3">
             <p className="muted">
-              Finché il numero non è collegato, i messaggi che arrivano su WhatsApp non vengono
-              associati al tuo studio e Ambrogio non risponde. Compila il modulo qui sotto con i
-              dati del pannello 360dialog: bastano trenta secondi e il canale è attivo.
+              Until the number is connected, incoming WhatsApp messages cannot be assigned to this
+              shop. Enter the channel details from the 360dialog Client Hub below.
             </p>
             {status.status !== null && status.status !== 'active' ? (
               <p className="helper">
-                Esiste una configurazione precedente in stato «{status.status}». Salvando i nuovi
-                dati verrà riattivata.
+                A previous configuration exists with status “{status.status}”. Saving new details
+                will reactivate it.
               </p>
             ) : null}
           </div>
@@ -143,7 +140,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
             {isConfirmingDisconnect ? (
               <>
                 <span className="helper" style={{ alignSelf: 'center' }}>
-                  Confermi? Ambrogio smette di rispondere su questo numero.
+                  Confirm? The receptionist will stop replying on this number.
                 </span>
                 <button
                   type="button"
@@ -151,7 +148,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
                   onClick={onDisconnect}
                   disabled={isDisconnecting}
                 >
-                  {isDisconnecting ? 'Scollegamento…' : 'Sì, scollega'}
+                  {isDisconnecting ? 'Disconnecting…' : 'Yes, disconnect'}
                 </button>
                 <button
                   type="button"
@@ -159,7 +156,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
                   onClick={() => setIsConfirmingDisconnect(false)}
                   disabled={isDisconnecting}
                 >
-                  Annulla
+                  Cancel
                 </button>
               </>
             ) : (
@@ -168,7 +165,7 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
                 className="btn btn-ghost btn-sm"
                 onClick={() => setIsConfirmingDisconnect(true)}
               >
-                Scollega numero
+                Disconnect number
               </button>
             )}
           </div>
@@ -179,11 +176,11 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
         <form onSubmit={onSubmit} className="card stack stack-6" noValidate>
           <div className="stack stack-2">
             <h2 style={{ fontSize: 'var(--text-xl)' }}>
-              {isConnected ? 'Aggiorna la connessione' : 'Collega il numero'}
+              {isConnected ? 'Update connection' : 'Connect number'}
             </h2>
             <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-              I dati arrivano dal Client Hub di 360dialog, il provider che ospita il tuo numero
-              WhatsApp Business.
+              These details come from the 360dialog Client Hub that hosts the WhatsApp Business
+              number.
             </p>
           </div>
 
@@ -202,20 +199,19 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
               autoComplete="off"
               className="input"
               defaultValue={status.phoneNumberId ?? ''}
-              placeholder="es. 109876543210987"
+              placeholder="e.g. 109876543210987"
               aria-describedby="phoneNumberId-help"
               disabled={isSubmitting}
             />
             <p id="phoneNumberId-help" className="helper">
-              In hub.360dialog.com apri il canale WhatsApp: il Phone number ID è nella scheda del
-              numero, accanto al nome del canale. È l&apos;identificativo con cui riconosciamo a
-              quale studio appartiene ogni messaggio in arrivo.
+              In hub.360dialog.com, open the WhatsApp channel. The Phone number ID is shown in the
+              number details and identifies which shop receives each incoming message.
             </p>
           </div>
 
           <div className="field">
             <label htmlFor="displayPhoneNumber" className="label">
-              Numero in formato leggibile
+              Display phone number
             </label>
             <input
               id="displayPhoneNumber"
@@ -225,12 +221,12 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
               autoComplete="off"
               className="input"
               defaultValue={status.displayPhoneNumber ?? ''}
-              placeholder="+39 02 1234567"
+              placeholder="+1 555 123 4567"
               aria-describedby="displayPhoneNumber-help"
               disabled={isSubmitting}
             />
             <p id="displayPhoneNumber-help" className="helper">
-              Facoltativo. Serve solo a te per riconoscere il numero nelle schermate.
+              Optional. This is only used to recognize the number in the dashboard.
             </p>
           </div>
 
@@ -248,15 +244,13 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
               autoComplete="off"
               spellCheck={false}
               className="input"
-              placeholder={isConnected ? 'Reinserisci la chiave per salvare' : 'Incolla la chiave'}
+              placeholder={isConnected ? 'Re-enter the key to save' : 'Paste the API key'}
               aria-describedby="apiKey-help"
               disabled={isSubmitting}
             />
             <p id="apiKey-help" className="helper">
-              Nel Client Hub, sezione API key del canale: la chiave viene mostrata una sola volta
-              alla generazione, quindi se non ce l&apos;hai più ne generi una nuova. La salviamo
-              cifrata e non la mostriamo mai più, nemmeno mascherata: per ogni modifica va
-              reinserita.
+              Find this in the channel&apos;s API key section in Client Hub. The key is encrypted at
+              rest and is never shown again. Re-enter it whenever you update this connection.
             </p>
           </div>
 
@@ -266,13 +260,12 @@ export function WhatsAppConnectionForm({ status, canManage }: WhatsAppConnection
             style={{ alignSelf: 'flex-start' }}
             disabled={isSubmitting}
           >
-            {isSubmitting ? 'Salvataggio…' : isConnected ? 'Salva modifiche' : 'Collega numero'}
+            {isSubmitting ? 'Saving…' : isConnected ? 'Save changes' : 'Connect number'}
           </button>
         </form>
       ) : (
         <p className="helper">
-          Solo il titolare dell&apos;account e gli amministratori possono modificare questa
-          integrazione. Chiedi a chi gestisce lo studio di collegare il numero.
+          Only the account owner and administrators can change this integration.
         </p>
       )}
     </div>
@@ -305,27 +298,27 @@ function DetailRow({
 
 function statusLabel(status: WhatsAppConnectionView): string {
   if (status.connected) {
-    return 'Attivo';
+    return 'Active';
   }
 
   if (status.status === 'revoked') {
-    return 'Scollegato';
+    return 'Disconnected';
   }
 
-  return status.status === null ? 'Non configurato' : status.status;
+  return status.status === null ? 'Not configured' : status.status;
 }
 
 function formatDate(value: string | null): string {
   if (value === null) {
-    return 'Non disponibile';
+    return 'Unavailable';
   }
 
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return 'Non disponibile';
+    return 'Unavailable';
   }
 
-  return parsed.toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
+  return parsed.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 /** L'envelope d'errore di `jsonHandler` è `{ ok: false, error: { code, message } }`. */
@@ -340,15 +333,15 @@ async function readErrorMessage(response: Response): Promise<string> {
   const code = readErrorField(payload, 'code');
 
   if (code === 'forbidden') {
-    return 'Non hai i permessi per modificare questa integrazione.';
+    return 'You do not have permission to change this integration.';
   }
 
   if (code === 'rate_limited') {
-    return 'Troppi tentativi ravvicinati. Riprova tra qualche minuto.';
+    return 'Too many attempts. Please try again in a few minutes.';
   }
 
   if (code === 'unauthorized') {
-    return 'Sessione non valida. Effettua di nuovo l’accesso.';
+    return 'Your session is invalid. Please sign in again.';
   }
 
   const exposed = readErrorField(payload, 'message');
@@ -356,7 +349,7 @@ async function readErrorMessage(response: Response): Promise<string> {
     return exposed;
   }
 
-  return 'Non siamo riusciti a scollegare il numero. Riprova tra poco.';
+  return 'We could not disconnect the number. Please try again shortly.';
 }
 
 function readErrorField(payload: unknown, field: 'code' | 'message'): string | null {

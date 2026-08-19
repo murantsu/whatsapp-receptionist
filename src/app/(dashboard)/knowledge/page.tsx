@@ -45,7 +45,7 @@ async function loadKnowledgeBase(): Promise<LoadResult> {
     const message =
       error instanceof AppError && error.expose
         ? error.message
-        : 'Non è stato possibile caricare la knowledge base. Ricarica la pagina; se il problema resta, il servizio dati non è raggiungibile.';
+        : 'The knowledge base could not be loaded. Reload the page; if it continues, the data service may be unavailable.';
 
     return { ok: false, message };
   }
@@ -58,11 +58,11 @@ export default async function KnowledgePage() {
     <>
       <div className="dashboard-header">
         <div className="stack stack-2">
-          <span className="eyebrow">Knowledge base</span>
-          <h1>Quello che l’assistente sa del tuo studio</h1>
+          <span className="eyebrow">Knowledge Base / FAQ</span>
+          <h1>Verified shop information</h1>
           <p className="muted" style={{ maxWidth: '60ch' }}>
-            Ogni documento viene indicizzato e recuperato quando un cliente fa una domanda
-            pertinente. Senza documenti l’assistente risponde solo in modo generico.
+            Add only facts the shop has verified. If no matching answer exists, the AI hands the
+            conversation to a person instead of guessing.
           </p>
         </div>
       </div>
@@ -72,7 +72,7 @@ export default async function KnowledgePage() {
       ) : (
         <div className="card card-padded" role="alert">
           <div className="stack stack-2">
-            <p style={{ fontWeight: 600 }}>Knowledge base non disponibile</p>
+            <p style={{ fontWeight: 600 }}>Knowledge base unavailable</p>
             <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
               {result.message}
             </p>
@@ -102,11 +102,11 @@ function KnowledgeBaseContent({
       <section className="stack stack-4" aria-labelledby="knowledge-list-heading">
         <div className="row row-between">
           <h2 id="knowledge-list-heading" style={{ fontSize: 'var(--text-lg)' }}>
-            Documenti
+            Documents
           </h2>
           {documents.length > 0 ? (
             <span className="muted mono" style={{ fontSize: 'var(--text-xs)' }}>
-              {activeCount} attivi su {documents.length}
+              {activeCount} active of {documents.length}
             </span>
           ) : null}
         </div>
@@ -115,10 +115,8 @@ function KnowledgeBaseContent({
           <div className="card card-padded" role="status">
             <p style={{ fontSize: 'var(--text-sm)' }}>
               <strong>{notIndexedCount}</strong>{' '}
-              {notIndexedCount === 1 ? 'documento attivo non è' : 'documenti attivi non sono'}{' '}
-              indicizzato per la ricerca semantica. L’assistente non{' '}
-              {notIndexedCount === 1 ? 'lo' : 'li'} recupera finché l’indicizzazione non viene
-              rigenerata.
+              {notIndexedCount === 1 ? 'active document is' : 'active documents are'} not yet
+              vector-indexed. Lexical retrieval remains available.
             </p>
           </div>
         ) : null}
@@ -137,7 +135,7 @@ function KnowledgeBaseContent({
 
         {documents.length >= DOCUMENT_LIMIT ? (
           <p className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-            Mostriamo i {DOCUMENT_LIMIT} documenti aggiornati più di recente.
+            Showing the {DOCUMENT_LIMIT} most recently updated documents.
           </p>
         ) : null}
       </section>
@@ -145,11 +143,10 @@ function KnowledgeBaseContent({
       <section className="card card-padded stack stack-4" aria-labelledby="knowledge-form-heading">
         <div className="stack stack-2">
           <h2 id="knowledge-form-heading" style={{ fontSize: 'var(--text-lg)' }}>
-            Aggiungi un documento
+            Add an FAQ or document
           </h2>
           <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-            Testo semplice. Niente allegati: quello che scrivi qui è esattamente quello che
-            l’assistente può citare.
+            Plain text only. The AI may use exactly what you verify and save here.
           </p>
         </div>
 
@@ -157,8 +154,7 @@ function KnowledgeBaseContent({
           <KnowledgeDocumentForm />
         ) : (
           <p className="helper">
-            Il tuo ruolo consente la sola lettura. Chiedi a un amministratore dello studio di
-            aggiungere o modificare i documenti.
+            Your role can read the knowledge base. Only owners and admins can change it.
           </p>
         )}
       </section>
@@ -181,11 +177,11 @@ function KnowledgeDocumentCard({
         </div>
         <div className="row" style={{ gap: 'var(--space-2)' }}>
           {!doc.active ? (
-            <span className="badge badge-neutral">Archiviato</span>
+            <span className="badge badge-neutral">Archived</span>
           ) : doc.hasEmbedding ? (
-            <span className="badge badge-success">Indicizzato</span>
+            <span className="badge badge-success">Indexed</span>
           ) : (
-            <span className="badge badge-warm">Non indicizzato</span>
+            <span className="badge badge-warm">Not indexed</span>
           )}
         </div>
       </div>
@@ -196,7 +192,7 @@ function KnowledgeDocumentCard({
 
       <div className="row row-between" style={{ gap: 'var(--space-3)' }}>
         <span className="muted mono" style={{ fontSize: 'var(--text-xs)' }}>
-          Aggiornato il {formatDate(doc.updatedAt)}
+          Updated {formatDate(doc.updatedAt)}
         </span>
         {canEdit ? (
           <KnowledgeDocumentArchiveButton
@@ -214,10 +210,10 @@ function EmptyKnowledgeBase({ canEdit }: Readonly<{ canEdit: boolean }>) {
   return (
     <div className="card">
       <div className="empty-state">
-        <p className="empty-state-title">Nessun documento, nessuna fonte di verità</p>
+        <p className="empty-state-title">No verified FAQs yet</p>
         <p className="empty-state-text">
-          Finché questa lista è vuota l’assistente può rispondere solo in modo generico: non conosce
-          i tuoi prezzi, i tuoi orari né le tue regole.
+          Until verified information is added, the AI will not guess prices, hours, services, or
+          shop policies. It will hand those questions to a person.
         </p>
         <ul
           className="stack stack-2"
@@ -231,27 +227,25 @@ function EmptyKnowledgeBase({ canEdit }: Readonly<{ canEdit: boolean }>) {
           }}
         >
           <li>
-            <strong>Listino</strong> — prestazioni e prezzi, con eventuali fasce o pacchetti.
+            <strong>Services and prices</strong> — only facts the shop has approved.
           </li>
           <li>
-            <strong>Politica di disdetta</strong> — entro quante ore, con quale penale, e le
-            eccezioni.
+            <strong>Cancellation policy</strong> — notice periods, fees, and exceptions.
           </li>
           <li>
-            <strong>Come raggiungere lo studio</strong> — indirizzo, piano, parcheggio, mezzi.
+            <strong>Shop location</strong> — address, parking, and arrival instructions.
           </li>
           <li>
-            <strong>Domande frequenti</strong> — quelle che ti fanno ogni settimana al telefono.
+            <strong>FAQs</strong> — recurring customer questions with verified answers.
           </li>
         </ul>
         {canEdit ? (
           <p className="helper" style={{ marginTop: 'var(--space-4)' }}>
-            Inizia dal riquadro qui a fianco: un documento basta per cambiare la qualità delle
-            risposte.
+            Start with hours, services, pricing rules, and the cancellation policy.
           </p>
         ) : (
           <p className="helper" style={{ marginTop: 'var(--space-4)' }}>
-            Chiedi a un amministratore dello studio di caricare il primo documento.
+            Ask a shop administrator to add the first verified FAQ.
           </p>
         )}
       </div>
@@ -269,20 +263,20 @@ function toExcerpt(content: string): string {
   return `${normalized.slice(0, EXCERPT_LENGTH).trimEnd()}…`;
 }
 
-const DATE_FORMATTER = new Intl.DateTimeFormat('it-IT', {
+const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
   day: '2-digit',
   month: '2-digit',
   year: 'numeric',
   hour: '2-digit',
   minute: '2-digit',
-  timeZone: 'Europe/Rome',
+  timeZone: 'America/New_York',
 });
 
 function formatDate(value: string): string {
   const parsed = new Date(value);
 
   if (Number.isNaN(parsed.getTime())) {
-    return 'data non disponibile';
+    return 'date unavailable';
   }
 
   return DATE_FORMATTER.format(parsed);

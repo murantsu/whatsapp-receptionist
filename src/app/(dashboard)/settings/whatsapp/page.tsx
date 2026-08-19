@@ -10,7 +10,7 @@ import { logger } from '@/lib/logging/logger';
 import { createWhatsAppProvisioningService } from '@/server/whatsapp/provisioning';
 
 export const metadata: Metadata = {
-  title: 'WhatsApp Business · Impostazioni · Ambrogio.ai',
+  title: 'WhatsApp Business · Settings · AI Receptionist',
 };
 
 // Lo stato dipende dalla sessione: non deve finire in cache statica.
@@ -27,7 +27,7 @@ async function loadStatus(tenantId: string): Promise<LoadResult> {
   } catch (error) {
     // Il layout ha già garantito la sessione: un errore qui è del datastore,
     // e vale la pena mostrare la pagina in stato degradato invece di un 500.
-    logger.error({ err: error, tenantId }, 'Lettura stato integrazione WhatsApp fallita');
+    logger.error({ err: error, tenantId }, 'Failed to read WhatsApp integration status');
     return { ok: false };
   }
 }
@@ -42,14 +42,13 @@ export default async function WhatsAppSettingsPage() {
         <div className="stack stack-2">
           <span className="eyebrow">
             <Link href="/settings" className="btn-link">
-              Impostazioni
+              Settings
             </Link>{' '}
-            / Integrazioni
+            / Integrations
           </span>
           <h1>WhatsApp Business</h1>
           <p className="muted">
-            Collega il numero del tuo studio: da quel momento Ambrogio legge e risponde ai messaggi
-            in arrivo su questo canale.
+            Connect the shop&apos;s WhatsApp Business number used for this managed pilot.
           </p>
         </div>
       </div>
@@ -61,18 +60,17 @@ export default async function WhatsAppSettingsPage() {
         />
       ) : (
         <section className="card stack stack-3">
-          <h2 style={{ fontSize: 'var(--text-xl)' }}>Stato non leggibile</h2>
+          <h2 style={{ fontSize: 'var(--text-xl)' }}>Status unavailable</h2>
           <p className="muted">
-            Non siamo riusciti a recuperare la configurazione del canale. Non significa che il
-            numero sia stato scollegato: è solo la lettura ad aver fallito. Ricarica tra poco, e se
-            il problema resta scrivici dalla pagina contatti.
+            We could not load the channel configuration. This does not mean the number was
+            disconnected. Try again shortly or contact pilot support if the issue continues.
           </p>
           <div className="row" style={{ gap: 'var(--space-3)' }}>
             <Link href="/settings/whatsapp" className="btn btn-secondary btn-sm">
-              Riprova
+              Try again
             </Link>
             <Link href="/contact" className="btn btn-ghost btn-sm">
-              Contatta il supporto
+              Contact support
             </Link>
           </div>
         </section>

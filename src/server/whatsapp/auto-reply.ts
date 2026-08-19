@@ -23,6 +23,7 @@ import type {
   TenantMessagingConfig,
   UpdateInboundMessageAnalysisInput,
 } from '@/server/whatsapp/repository';
+import { isEnUsLocale } from '@/lib/pilot/auto-repair';
 
 export type WhatsAppAutoReplySource = 'text' | 'voice_transcript';
 
@@ -82,7 +83,11 @@ export interface WhatsAppAutoReplyHandler {
 }
 
 type AutoReplyGuardrail = {
-  code: 'empty_voice_transcript' | 'low_voice_transcript_confidence' | 'sensitive_handoff';
+  code:
+    | 'empty_voice_transcript'
+    | 'low_voice_transcript_confidence'
+    | 'sensitive_handoff'
+    | 'vehicle_safety_handoff';
   intent: IntentClassification['intent'];
   confidence: number;
   reason: string;
@@ -125,11 +130,13 @@ export class WhatsAppAutoReplyService implements WhatsAppAutoReplyHandler {
   }
 
   async handleInboundMessage(input: WhatsAppAutoReplyInput): Promise<WhatsAppAutoReplyResult> {
+    const config = await this.repository.getTenantMessagingConfig(input.tenantId);
     const guardrail = evaluateAutoReplyGuardrail(input, {
       voiceTranscriptMinConfidence: this.voiceTranscriptMinConfidence,
+      locale: config.defaultLocale,
     });
-    const result = await this.analyzeAndReply(input, guardrail);
-    await this.escalateIfNeeded(input, guardrail, result);
+    const result = await this.analyzeAndReply(input, config, guardrail);
+    await this.escalateIfNeeded(input, config, guardrail, result);
 
     return result;
   }
@@ -141,6 +148,7 @@ export class WhatsAppAutoReplyService implements WhatsAppAutoReplyHandler {
    */
   private async escalateIfNeeded(
     input: WhatsAppAutoReplyInput,
+    config: TenantMessagingConfig,
     guardrail: AutoReplyGuardrail | null,
     result: WhatsAppAutoReplyResult,
   ): Promise<void> {
@@ -156,8 +164,9 @@ export class WhatsAppAutoReplyService implements WhatsAppAutoReplyHandler {
         inboundExternalId: input.inboundExternalId,
         messageText: input.text,
         occurredAt: input.occurredAt,
-        reason: toEscalationReason(guardrail),
+        reason: toEscalationReason(guardrail, result.classification),
         aiReplied: result.queued,
+        locale: config.defaultLocale,
       });
     } catch (error) {
       this.log.error(
@@ -173,9 +182,9 @@ export class WhatsAppAutoReplyService implements WhatsAppAutoReplyHandler {
 
   private async analyzeAndReply(
     input: WhatsAppAutoReplyInput,
+    config: TenantMessagingConfig,
     guardrail: AutoReplyGuardrail | null,
   ): Promise<WhatsAppAutoReplyResult> {
-    const config = await this.repository.getTenantMessagingConfig(input.tenantId);
     const baseReplyPlan = guardrail
       ? {
           shouldReply: false,
@@ -361,19 +370,47 @@ export class WhatsAppAutoReplyService implements WhatsAppAutoReplyHandler {
       return replyPlan;
     }
 
+    const isLowConfidenceContinuation =
+      replyPlan.classification.intent === 'human_handoff' &&
+      replyPlan.classification.matchedSignals.includes('ai_low_confidence');
+
     const bookingReply = await this.bookingBridge.createBookingReply({
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       customerIdentifier: input.customerIdentifier,
       customerName: null,
       text: input.text,
-      intent: replyPlan.classification.intent,
+      intent: isLowConfidenceContinuation ? 'other' : replyPlan.classification.intent,
       occurredAt: input.occurredAt,
+      locale: config.defaultLocale,
     });
 
     if (!bookingReply.handled || !bookingReply.replyText) {
       return replyPlan;
     }
+
+    const classification: IntentClassification = bookingReply.handoffReason
+      ? {
+          intent: 'human_handoff',
+          confidence: 0.99,
+          matchedSignals: [bookingReply.handoffReason],
+          ...(replyPlan.classification.aiUsage !== undefined
+            ? { aiUsage: replyPlan.classification.aiUsage }
+            : {}),
+        }
+      : isLowConfidenceContinuation
+        ? {
+            intent: 'booking_request',
+            confidence: 0.9,
+            matchedSignals: [
+              ...replyPlan.classification.matchedSignals,
+              'booking_state_continuation',
+            ],
+            ...(replyPlan.classification.aiUsage !== undefined
+              ? { aiUsage: replyPlan.classification.aiUsage }
+              : {}),
+          }
+        : replyPlan.classification;
 
     return {
       ...replyPlan,
@@ -381,7 +418,9 @@ export class WhatsAppAutoReplyService implements WhatsAppAutoReplyHandler {
       replyText: withDisclosure(bookingReply.replyText, {
         assistantName: config.assistantName,
         aiDisclosureEnabled: config.aiDisclosureEnabled,
+        locale: config.defaultLocale,
       }),
+      classification,
       metadata: {
         ...(replyPlan.metadata ?? {}),
         ...(bookingReply.metadata ?? {}),
@@ -394,6 +433,7 @@ function evaluateAutoReplyGuardrail(
   input: WhatsAppAutoReplyInput,
   options: {
     voiceTranscriptMinConfidence: number;
+    locale: string;
   },
 ): AutoReplyGuardrail | null {
   const text = input.text.trim();
@@ -420,7 +460,16 @@ function evaluateAutoReplyGuardrail(
     };
   }
 
-  if (containsSensitiveHandoffSignal(text)) {
+  if (containsVehicleSafetySignal(text, options.locale)) {
+    return {
+      code: 'vehicle_safety_handoff',
+      intent: 'human_handoff',
+      confidence: 0.99,
+      reason: 'The customer asked for vehicle diagnosis, drivability, or safety advice.',
+    };
+  }
+
+  if (containsSensitiveHandoffSignal(text, options.locale)) {
     return {
       code: 'sensitive_handoff',
       intent: 'human_handoff',
@@ -451,8 +500,31 @@ function createDefaultEscalation(
  * Senza guardrail l'intent `human_handoff` arriva dal classificatore: e' il
  * cliente che ha chiesto esplicitamente una persona.
  */
-function toEscalationReason(guardrail: AutoReplyGuardrail | null): EscalationReason {
-  return guardrail ? guardrail.code : 'human_handoff_intent';
+function toEscalationReason(
+  guardrail: AutoReplyGuardrail | null,
+  classification: IntentClassification,
+): EscalationReason {
+  if (guardrail) {
+    return guardrail.code;
+  }
+
+  if (classification.matchedSignals.includes('calendar_sync_failed')) {
+    return 'calendar_sync_failed';
+  }
+
+  if (classification.matchedSignals.includes('booking_manual_review')) {
+    return 'booking_manual_review';
+  }
+
+  if (classification.matchedSignals.includes('unverified_information')) {
+    return 'unverified_information';
+  }
+
+  if (classification.matchedSignals.includes('ai_low_confidence')) {
+    return 'ai_low_confidence';
+  }
+
+  return 'human_handoff_intent';
 }
 
 function guardrailToClassification(guardrail: AutoReplyGuardrail): IntentClassification {
@@ -545,23 +617,28 @@ function withDisclosure(
   input: {
     assistantName: string;
     aiDisclosureEnabled: boolean;
+    locale: string;
   },
 ): string {
   if (!input.aiDisclosureEnabled) {
     return body;
   }
 
-  return `Ciao, sono ${input.assistantName}, l'assistente AI dello studio. ${body}`;
+  return isEnUsLocale(input.locale)
+    ? `Hi, I'm ${input.assistantName}, the shop's AI receptionist. ${body}`
+    : `Ciao, sono ${input.assistantName}, l'assistente AI dello studio. ${body}`;
 }
 
-function containsSensitiveHandoffSignal(text: string): boolean {
+function containsSensitiveHandoffSignal(text: string, locale: string): boolean {
   const normalized = normalizeForMatching(text);
 
   if (!normalized) {
     return false;
   }
 
-  return sensitiveHandoffSignals.some((signal) => signal.test(normalized));
+  const signals = isEnUsLocale(locale) ? englishSensitiveHandoffSignals : sensitiveHandoffSignals;
+
+  return signals.some((signal) => signal.test(normalized));
 }
 
 const sensitiveHandoffSignals = [
@@ -570,6 +647,32 @@ const sensitiveHandoffSignals = [
   /\b(suicidio|suicidarmi|farmi del male|violenza|minaccia)\b/,
   /\b(avvocato|denuncia|querela|causa legale|tribunale)\b/,
 ];
+
+const englishSensitiveHandoffSignals = [
+  /\b(emergency|call 911|ambulance|cannot breathe|can't breathe|unconscious|seriously injured)\b/,
+  /\b(suicide|kill myself|hurt myself|self harm|threat|threatening|violence)\b/,
+  /\b(major crash|serious accident|vehicle fire|car fire|flames|fuel leak)\b/,
+];
+
+function containsVehicleSafetySignal(text: string, locale: string): boolean {
+  if (!isEnUsLocale(locale)) {
+    return false;
+  }
+
+  const normalized = normalizeForMatching(text);
+
+  if (!normalized) {
+    return false;
+  }
+
+  return [
+    /\b(is it|is my (?:car|truck|vehicle))\s+safe to drive\b/,
+    /\b(can|should|could)\s+i\s+(?:still\s+)?drive\b/,
+    /\b(?:diagnose|diagnosis|what(?:'s| is) wrong|what is causing|cause of|why is my (?:car|truck|vehicle))\b/,
+    /\b(no brakes|brakes? (?:failed|not working|went out)|steering (?:failed|stuck|not working))\b/,
+    /\b(tire blowout|wheel (?:is )?loose|smoke from (?:the )?(?:engine|car)|burning smell)\b/,
+  ].some((signal) => signal.test(normalized));
+}
 
 function normalizeForMatching(text: string): string {
   return text

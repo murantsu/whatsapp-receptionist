@@ -322,6 +322,34 @@ describe('WhatsAppAutoReplyService escalation wiring', () => {
     expect(world.emailSender.sent).toHaveLength(0);
   });
 
+  it('escalates an en-US vehicle safety question without diagnosing drivability', async () => {
+    const world = createWorld();
+    const repository = new FakeAutoReplyRepository();
+    repository.locale = 'en-US';
+    const service = new WhatsAppAutoReplyService(repository, {
+      autoReplyEnabled: true,
+      replyOrchestrator: new ReplyOrchestrator(),
+      escalation: world.service,
+    });
+
+    const result = await service.handleInboundMessage({
+      ...baseInput(),
+      source: 'text',
+      transcriptLanguageProbability: null,
+      text: 'My brakes are grinding. Is it safe to drive?',
+    });
+
+    expect(result).toMatchObject({
+      queued: false,
+      skippedReason: 'guardrail',
+      classification: { intent: 'human_handoff' },
+    });
+    expect(world.repository.conversations.get('tenant_1:conversation_1')?.status).toBe('escalated');
+    expect(world.notifier.inserted[0]?.content).toContain('do not drive');
+    expect(world.notifier.inserted[0]?.content).toContain('roadside');
+    expect(repository.outboundMessages).toHaveLength(0);
+  });
+
   it('does not fail the inbound message when the escalation blows up', async () => {
     const world = createWorld();
     world.repository.failWith = new Error('supabase unreachable');
@@ -526,6 +554,7 @@ class FakeLogger {
  * "il cliente ha ricevuto l'avviso di escalation".
  */
 class FakeAutoReplyRepository implements WhatsAppAutoReplyRepository {
+  locale = 'it-IT';
   readonly messageAnalyses: UpdateInboundMessageAnalysisInput[] = [];
   readonly outboundMessages: InsertOutboundMessageInput[] = [];
   readonly outboxJobs: EnqueueOutboundMessageInput[] = [];
@@ -541,7 +570,7 @@ class FakeAutoReplyRepository implements WhatsAppAutoReplyRepository {
       assistantName: 'Ambrogio',
       aiDisclosureEnabled: true,
       autoReplyEnabled: true,
-      defaultLocale: 'it-IT',
+      defaultLocale: this.locale,
     };
   }
 

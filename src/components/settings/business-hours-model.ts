@@ -38,13 +38,13 @@ export interface DayIssue {
 
 /** `0` è domenica: stessa convenzione di `Date#getUTCDay`, usata dal booking. */
 const WEEKDAY_LABELS = [
-  'Domenica',
-  'Lunedì',
-  'Martedì',
-  'Mercoledì',
-  'Giovedì',
-  'Venerdì',
-  'Sabato',
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
 ] as const;
 
 /** Ordine di lettura italiano: la settimana inizia da lunedì. */
@@ -53,7 +53,7 @@ export const WEEKDAY_DISPLAY_ORDER: readonly number[] = [1, 2, 3, 4, 5, 6, 0];
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export function weekdayLabel(weekday: number): string {
-  return WEEKDAY_LABELS[weekday] ?? `Giorno ${weekday}`;
+  return WEEKDAY_LABELS[weekday] ?? `Day ${weekday}`;
 }
 
 /**
@@ -149,7 +149,7 @@ export async function saveBusinessHours(input: {
         method: 'PUT',
         body: buildBusinessHoursPayload(input.drafts),
       }),
-    'Non siamo riusciti a salvare gli orari. Riprova tra poco.',
+    'We could not save the business hours. Please try again shortly.',
   );
 }
 
@@ -158,7 +158,7 @@ function issuesForDraft(draft: DayDraft): readonly DayIssue[] {
     return [
       {
         weekday: draft.weekday,
-        message: `${weekdayLabel(draft.weekday)}: indica sia l’orario di apertura sia quello di chiusura, oppure marca il giorno come chiuso.`,
+        message: `${weekdayLabel(draft.weekday)}: enter both opening and closing times, or mark the day closed.`,
       },
     ];
   }
@@ -167,7 +167,7 @@ function issuesForDraft(draft: DayDraft): readonly DayIssue[] {
     return [
       {
         weekday: draft.weekday,
-        message: `${weekdayLabel(draft.weekday)}: l’apertura deve precedere la chiusura.`,
+        message: `${weekdayLabel(draft.weekday)}: the opening time must be before the closing time.`,
       },
     ];
   }

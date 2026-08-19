@@ -14,25 +14,26 @@ import {
 } from '@/server/conversations/inbox';
 import { CUSTOMER_SERVICE_WINDOW_MS } from '@/server/conversations/operator-messages';
 import { createWhatsAppOptOutService } from '@/server/whatsapp/opt-outs';
+import { createTenantSettingsService } from '@/server/settings/tenant-settings';
 
 export const metadata: Metadata = {
-  title: 'Conversazione · Ambrogio.ai',
+  title: 'Conversation · Ambrogio.ai',
 };
 
 // `listMessages` accetta al massimo 200 messaggi per conversazione.
 const MESSAGE_LIMIT = 200;
 
 const STATUS_LABELS: Record<ConversationStatus, { label: string; badge: string }> = {
-  active: { label: 'Attiva', badge: 'badge' },
-  escalated: { label: 'Escalation', badge: 'badge badge-danger' },
-  closed: { label: 'Chiusa', badge: 'badge badge-neutral' },
+  active: { label: 'Active', badge: 'badge' },
+  escalated: { label: 'Needs human reply', badge: 'badge badge-danger' },
+  closed: { label: 'Closed', badge: 'badge badge-neutral' },
   spam: { label: 'Spam', badge: 'badge badge-warm' },
 };
 
 const CHANNEL_LABELS: Record<ConversationChannel, string> = {
   whatsapp: 'WhatsApp',
   instagram_dm: 'Instagram DM',
-  web_chat: 'Chat web',
+  web_chat: 'Web chat',
   sms: 'SMS',
 };
 
@@ -41,7 +42,7 @@ const SENDER_STYLES: Record<
   { label: string; align: 'flex-start' | 'flex-end' | 'center'; background: string; border: string }
 > = {
   customer: {
-    label: 'Cliente',
+    label: 'Customer',
     align: 'flex-start',
     background: 'var(--color-surface-sunken)',
     border: '1px solid var(--color-border)',
@@ -53,13 +54,13 @@ const SENDER_STYLES: Record<
     border: '1px solid var(--color-accent-soft)',
   },
   human: {
-    label: 'Operatore',
+    label: 'Shop team',
     align: 'flex-end',
     background: 'var(--color-surface)',
     border: '1px solid var(--color-accent)',
   },
   system: {
-    label: 'Sistema',
+    label: 'System',
     align: 'center',
     background: 'transparent',
     border: '1px dashed var(--color-border)',
@@ -68,11 +69,11 @@ const SENDER_STYLES: Record<
 
 const DELIVERY_LABELS: Record<ConversationMessage['status'], string | null> = {
   received: null,
-  pending: 'in coda',
-  sent: 'inviato',
-  delivered: 'consegnato',
-  read: 'letto',
-  failed: 'invio fallito',
+  pending: 'queued',
+  sent: 'sent',
+  delivered: 'delivered',
+  read: 'read',
+  failed: 'delivery failed',
 };
 
 export default async function ConversationDetailPage({
@@ -106,17 +107,16 @@ export default async function ConversationDetailPage({
       <>
         <BackLink />
         <div className="card card-padded stack stack-3" role="alert">
-          <h1 style={{ fontSize: 'var(--text-xl)' }}>Non riusciamo ad aprire la conversazione</h1>
+          <h1 style={{ fontSize: 'var(--text-xl)' }}>The conversation could not be opened</h1>
           <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-            Il servizio non ha risposto. Ricarica la pagina: se il problema resta, controlla lo
-            stato del sistema.
+            The service did not respond. Reload the page and check system status if it continues.
           </p>
           <div className="row" style={{ gap: 'var(--space-3)' }}>
             <Link href={`/conversations/${conversationId}`} className="btn btn-secondary btn-sm">
-              Riprova
+              Retry
             </Link>
             <Link href="/status" className="btn btn-ghost btn-sm">
-              Stato del servizio
+              Service status
             </Link>
           </div>
         </div>
@@ -125,6 +125,7 @@ export default async function ConversationDetailPage({
   }
 
   const { conversation, messages } = detail;
+  const timezone = await readTenantTimezone(session);
   const statusConfig = STATUS_LABELS[conversation.status];
   const isAdmin = session.role === 'owner' || session.role === 'admin';
 
@@ -151,19 +152,17 @@ export default async function ConversationDetailPage({
 
       <div className="dashboard-header">
         <div className="stack stack-2">
-          <span className="eyebrow">Conversazione</span>
+          <span className="eyebrow">Conversation</span>
           <h1>{conversation.customerName ?? conversation.customerIdentifier}</h1>
           <div className="row" style={{ gap: 'var(--space-2)', flexWrap: 'wrap' }}>
             <span className="badge badge-neutral">{CHANNEL_LABELS[conversation.channel]}</span>
             <span className={statusConfig.badge}>{statusConfig.label}</span>
             {conversation.aiEnabled ? (
-              <span className="badge">AI attiva</span>
+              <span className="badge">AI active</span>
             ) : (
-              <span className="badge badge-warm">Solo operatore</span>
+              <span className="badge badge-warm">Human only</span>
             )}
-            {optedOut === true ? (
-              <span className="badge badge-danger">Consenso revocato</span>
-            ) : null}
+            {optedOut === true ? <span className="badge badge-danger">Unsubscribed</span> : null}
           </div>
           <p className="muted mono" style={{ fontSize: 'var(--text-xs)' }}>
             {conversation.customerIdentifier}
@@ -172,10 +171,10 @@ export default async function ConversationDetailPage({
 
         <div className="stack stack-2" style={{ textAlign: 'right' }}>
           <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-            Ultimo messaggio
+            Last message
           </span>
           <time dateTime={conversation.lastMessageAt} style={{ fontWeight: 600 }}>
-            {formatDateTime(conversation.lastMessageAt)}
+            {formatDateTime(conversation.lastMessageAt, timezone)}
           </time>
         </div>
       </div>
@@ -189,64 +188,67 @@ export default async function ConversationDetailPage({
             borderColor: isWindowOpen ? 'var(--color-success)' : 'var(--color-warning)',
           }}
         >
-          <span className="eyebrow">Finestra di servizio WhatsApp</span>
+          <span className="eyebrow">WhatsApp customer-service window</span>
           {isWindowKnown ? (
             <p style={{ fontSize: 'var(--text-sm)' }}>
               {isWindowOpen ? (
                 <>
-                  Aperta fino al{' '}
-                  <strong>{formatDateTime(new Date(windowExpiresAt).toISOString())}</strong>. Entro
-                  questo orario puoi scrivere un messaggio libero.
+                  Open until{' '}
+                  <strong>
+                    {formatDateTime(new Date(windowExpiresAt).toISOString(), timezone)}
+                  </strong>
+                  . You can send a free-form reply until then.
                 </>
               ) : (
                 <>
-                  Chiusa dal{' '}
-                  <strong>{formatDateTime(new Date(windowExpiresAt).toISOString())}</strong>. Fuori
-                  dalle 24 ore WhatsApp consente solo template approvati, non ancora supportati:
-                  potrai rispondere quando il cliente scriverà di nuovo.
+                  Closed since{' '}
+                  <strong>
+                    {formatDateTime(new Date(windowExpiresAt).toISOString(), timezone)}
+                  </strong>
+                  . Approved template replies are not included in this pilot; wait for a new
+                  customer message before replying here.
                 </>
               )}
             </p>
           ) : (
-            <p style={{ fontSize: 'var(--text-sm)' }}>Scadenza della finestra non disponibile.</p>
+            <p style={{ fontSize: 'var(--text-sm)' }}>Window expiration is unavailable.</p>
           )}
           {optedOut === true ? (
             <p style={{ fontSize: 'var(--text-sm)' }}>
-              Il cliente ha revocato il consenso: nessun messaggio può essergli inviato finché non
-              lo ripristina scrivendo di nuovo.
+              The customer unsubscribed. Do not send a message unless they opt back in.
             </p>
           ) : null}
         </div>
       ) : null}
 
-      <section className="card card-padded stack stack-4" aria-label="Cronologia messaggi">
+      <section className="card card-padded stack stack-4" aria-label="Message history">
         {messages.length === 0 ? (
           <div className="empty-state">
-            <p className="empty-state-title">Nessun messaggio in archivio</p>
+            <p className="empty-state-title">No saved messages</p>
             <p className="empty-state-text">
-              La conversazione esiste ma non ha ancora messaggi salvati. Se il cliente ha appena
-              scritto, ricarica tra qualche istante.
+              This conversation exists but has no saved messages yet. Reload in a moment if the
+              customer just wrote.
             </p>
           </div>
         ) : (
           <ol className="stack stack-4" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
+              <MessageBubble key={message.id} message={message} timezone={timezone} />
             ))}
           </ol>
         )}
 
         {messages.length === MESSAGE_LIMIT ? (
-          <p className="helper">Mostriamo i primi {MESSAGE_LIMIT} messaggi della conversazione.</p>
+          <p className="helper">Showing the first {MESSAGE_LIMIT} messages.</p>
         ) : null}
       </section>
 
       <section
         className="stack stack-3"
         style={{ marginTop: 'var(--space-6)' }}
-        aria-label="Risposta operatore"
+        aria-label="Human reply"
       >
-        <h2 style={{ fontSize: 'var(--text-lg)' }}>Rispondi come operatore</h2>
+        <h2 style={{ fontSize: 'var(--text-lg)' }}>Reply as the shop</h2>
         <OperatorReplyForm conversationId={conversation.id} disabledReason={disabledReason} />
       </section>
     </>
@@ -257,13 +259,13 @@ function BackLink() {
   return (
     <p style={{ marginBottom: 'var(--space-4)' }}>
       <Link href="/conversations" className="btn-link">
-        ← Torna all’inbox
+        ← Back to inbox
       </Link>
     </p>
   );
 }
 
-function MessageBubble({ message }: { message: ConversationMessage }) {
+function MessageBubble({ message, timezone }: { message: ConversationMessage; timezone: string }) {
   const sender = SENDER_STYLES[message.senderType];
   const deliveryLabel = message.direction === 'outbound' ? DELIVERY_LABELS[message.status] : null;
   const body = readBody(message);
@@ -296,7 +298,7 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
             className="muted"
             style={{ fontSize: 'var(--text-xs)' }}
           >
-            {formatDateTime(message.createdAt)}
+            {formatDateTime(message.createdAt, timezone)}
           </time>
           {deliveryLabel !== null ? (
             <span
@@ -324,7 +326,7 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
           <p style={{ fontSize: 'var(--text-sm)', whiteSpace: 'pre-wrap' }}>{body.text}</p>
         ) : (
           <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-            Contenuto testuale non disponibile.
+            Text content unavailable.
           </p>
         )}
 
@@ -342,7 +344,7 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
                   rel="noreferrer noopener"
                   style={{ fontSize: 'var(--text-xs)' }}
                 >
-                  Allegato {index + 1}
+                  Attachment {index + 1}
                 </a>
               </li>
             ))}
@@ -366,7 +368,7 @@ function readBody(message: ConversationMessage): { text: string | null; label: s
   }
 
   if (message.messageType !== 'text') {
-    return { text: null, label: `Messaggio di tipo ${message.messageType}` };
+    return { text: null, label: `${message.messageType} message` };
   }
 
   return { text: null, label: null };
@@ -378,7 +380,7 @@ function formatVoiceLabel(message: ConversationMessage): string {
       ? ` · ${Math.round(message.audioDurationSecs)}s`
       : '';
 
-  return `Trascrizione vocale${duration}`;
+  return `Voice transcript${duration}`;
 }
 
 function resolveDisabledReason(input: {
@@ -388,19 +390,19 @@ function resolveDisabledReason(input: {
   isWindowOpen: boolean;
 }): string | null {
   if (!input.isAdmin) {
-    return 'Solo owner e admin possono inviare messaggi manuali.';
+    return 'Only owners and admins can send manual replies.';
   }
 
   if (input.channel !== 'whatsapp') {
-    return 'L’invio manuale è disponibile solo sulle conversazioni WhatsApp.';
+    return 'Manual replies are available only for WhatsApp conversations.';
   }
 
   if (input.optedOut === true) {
-    return 'Il cliente ha revocato il consenso: non è possibile inviargli messaggi.';
+    return 'The customer unsubscribed, so a reply cannot be sent.';
   }
 
   if (!input.isWindowOpen) {
-    return 'La finestra di servizio 24 ore è chiusa. Potrai rispondere dopo un nuovo messaggio del cliente.';
+    return 'The 24-hour customer-service window is closed. You can reply after a new customer message.';
   }
 
   return null;
@@ -422,19 +424,27 @@ async function readOptOut(
   }
 }
 
-function formatDateTime(iso: string): string {
+function formatDateTime(iso: string, timezone: string): string {
   const timestamp = Date.parse(iso);
 
   if (Number.isNaN(timestamp)) {
-    return 'data non disponibile';
+    return 'date unavailable';
   }
 
-  return new Intl.DateTimeFormat('it-IT', {
+  return new Intl.DateTimeFormat('en-US', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: 'Europe/Rome',
+    timeZone: timezone,
   }).format(new Date(timestamp));
+}
+
+async function readTenantTimezone(session: AuthSession): Promise<string> {
+  try {
+    return (await createTenantSettingsService().getSnapshot({ session })).tenant.timezone;
+  } catch {
+    return 'America/New_York';
+  }
 }

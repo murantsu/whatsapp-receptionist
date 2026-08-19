@@ -22,7 +22,7 @@ export function KnowledgeDocumentForm() {
   const { state, onSubmit } = useApiForm({
     endpoint: KNOWLEDGE_BASE_ENDPOINT,
     successMessage:
-      'Documento salvato e indicizzato. L’assistente lo userà dalla prossima domanda.',
+      'Saved. The AI can use this verified information for matching customer questions.',
     buildBody: (formData) => {
       const category = String(formData.get('category') ?? '').trim();
 
@@ -48,7 +48,7 @@ export function KnowledgeDocumentForm() {
 
       <div className="field">
         <label htmlFor="knowledge-title" className="label">
-          Titolo
+          Title
         </label>
         <input
           id="knowledge-title"
@@ -57,7 +57,7 @@ export function KnowledgeDocumentForm() {
           required
           minLength={1}
           maxLength={160}
-          placeholder="Politica di disdetta appuntamenti"
+          placeholder="Cancellation policy"
           className="input"
           disabled={isSubmitting}
         />
@@ -65,23 +65,23 @@ export function KnowledgeDocumentForm() {
 
       <div className="field">
         <label htmlFor="knowledge-category" className="label">
-          Categoria <span className="muted">(facoltativa)</span>
+          Category <span className="muted">(optional)</span>
         </label>
         <input
           id="knowledge-category"
           name="category"
           type="text"
           maxLength={80}
-          placeholder="Regolamento, Listino, Sede…"
+          placeholder="FAQ, Hours, Pricing, Services…"
           className="input"
           disabled={isSubmitting}
         />
-        <p className="helper">Serve solo a te per ritrovare i documenti nell’elenco.</p>
+        <p className="helper">Use a clear category so the shop team can find it later.</p>
       </div>
 
       <div className="field">
         <label htmlFor="knowledge-content" className="label">
-          Contenuto
+          Verified answer
         </label>
         <textarea
           id="knowledge-content"
@@ -91,20 +91,19 @@ export function KnowledgeDocumentForm() {
           maxLength={30000}
           rows={8}
           placeholder={
-            'Scrivi come lo spiegheresti a un collega nuovo.\n\nEsempio: la disdetta è gratuita fino a 24 ore prima. Sotto le 24 ore addebitiamo 30 €. In caso di malattia con certificato non addebitiamo nulla.'
+            'Write the exact facts the AI may share.\n\nExample: Oil-change appointments take about 45 minutes. Final pricing depends on the vehicle and oil requirements; a team member confirms the price.'
           }
           className="textarea"
           disabled={isSubmitting}
         />
         <p className="helper">
-          Massimo 30.000 caratteri. Un documento per argomento funziona meglio di un unico testo
-          lungo: la ricerca semantica recupera il pezzo giusto invece dell’intero blocco.
+          Maximum 30,000 characters. One topic per document works best for safe retrieval.
         </p>
       </div>
 
       <div className="row">
         <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-          {isSubmitting ? 'Salvataggio…' : 'Aggiungi documento'}
+          {isSubmitting ? 'Saving…' : 'Add document'}
         </button>
       </div>
     </form>
@@ -158,7 +157,7 @@ export function KnowledgeDocumentArchiveButton({
       <div className="row" style={{ gap: 'var(--space-2)' }}>
         {status === 'error' ? (
           <span role="alert" style={{ fontSize: 'var(--text-xs)', color: 'var(--color-danger)' }}>
-            Operazione non riuscita. Riprova.
+            The operation failed. Try again.
           </span>
         ) : null}
         <button
@@ -167,8 +166,8 @@ export function KnowledgeDocumentArchiveButton({
           disabled={status === 'pending'}
           onClick={() => void submitChange()}
         >
-          {status === 'pending' ? 'Riattivazione…' : 'Riattiva'}
-          <span className="sr-only"> il documento {title}</span>
+          {status === 'pending' ? 'Restoring…' : 'Restore'}
+          <span className="sr-only"> document {title}</span>
         </button>
       </div>
     );
@@ -178,17 +177,17 @@ export function KnowledgeDocumentArchiveButton({
     return (
       <div className="row" style={{ gap: 'var(--space-2)' }}>
         <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-          L’assistente smetterà di usarlo. Confermi?
+          The AI will stop using this document. Continue?
         </span>
         <button
           type="button"
           className="btn btn-sm btn-secondary"
           onClick={() => void submitChange()}
         >
-          Sì, archivia
+          Archive
         </button>
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setStatus('idle')}>
-          Annulla
+          Cancel
         </button>
       </div>
     );
@@ -198,7 +197,7 @@ export function KnowledgeDocumentArchiveButton({
     <div className="row" style={{ gap: 'var(--space-2)' }}>
       {status === 'error' ? (
         <span role="alert" style={{ fontSize: 'var(--text-xs)', color: 'var(--color-danger)' }}>
-          Archiviazione non riuscita. Riprova.
+          Archiving failed. Try again.
         </span>
       ) : null}
       <button
@@ -207,8 +206,8 @@ export function KnowledgeDocumentArchiveButton({
         disabled={status === 'pending'}
         onClick={() => setStatus('confirming')}
       >
-        {status === 'pending' ? 'Archiviazione…' : 'Archivia'}
-        <span className="sr-only"> il documento {title}</span>
+        {status === 'pending' ? 'Archiving…' : 'Archive'}
+        <span className="sr-only"> document {title}</span>
       </button>
     </div>
   );

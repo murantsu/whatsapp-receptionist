@@ -30,6 +30,17 @@ describe('RuleBasedIntentClassifier', () => {
       intent: 'pricing_question',
     });
   });
+
+  it.each([
+    ['I need an urgent appointment tomorrow', 'booking_request'],
+    ['move my appointment to Friday at 11 AM', 'reschedule_request'],
+    ['cancel my appointment tomorrow', 'cancellation_request'],
+    ['I need to speak with a person', 'human_handoff'],
+  ])('classifies en-US “%s” as %s', async (text, intent) => {
+    await expect(
+      new RuleBasedIntentClassifier().classify({ text, locale: 'en-US' }),
+    ).resolves.toMatchObject({ intent });
+  });
 });
 
 describe('ReplyOrchestrator', () => {

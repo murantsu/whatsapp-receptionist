@@ -6,10 +6,11 @@ import { toAppError } from '@/lib/errors/app-error';
 import { logger } from '@/lib/logging/logger';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import type { AppointmentStatus, BookingSource } from '@/server/appointments/booking';
+import type { CalendarSyncStatus } from '@/server/appointments/booking';
 import { createTenantSettingsService } from '@/server/settings/tenant-settings';
 
 export const metadata: Metadata = {
-  title: 'Calendario · Ambrogio.ai',
+  title: 'Appointments · Ambrogio.ai',
 };
 
 /**
@@ -20,21 +21,21 @@ export const metadata: Metadata = {
 const DAYS_AHEAD = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FETCH_LIMIT = 300;
-const DEFAULT_TIMEZONE = 'Europe/Rome';
+const DEFAULT_TIMEZONE = 'America/New_York';
 
 const STATUS_CONFIG: Record<AppointmentStatus, { readonly label: string; readonly badge: string }> =
   {
-    confirmed: { label: 'Confermato', badge: 'badge-success' },
-    cancelled: { label: 'Cancellato', badge: 'badge-danger' },
-    completed: { label: 'Concluso', badge: 'badge-neutral' },
-    no_show: { label: 'Non presentato', badge: 'badge-warm' },
+    confirmed: { label: 'Confirmed', badge: 'badge-success' },
+    cancelled: { label: 'Cancelled', badge: 'badge-danger' },
+    completed: { label: 'Completed', badge: 'badge-neutral' },
+    no_show: { label: 'No-show', badge: 'badge-warm' },
   };
 
 const SOURCE_LABEL: Record<BookingSource, string> = {
-  manual: 'Inserito a mano',
-  whatsapp_ai: 'Prenotato da Ambrogio su WhatsApp',
-  dashboard: 'Creato dalla dashboard',
-  api: 'Creato via API',
+  manual: 'Added manually',
+  whatsapp_ai: 'Booked by the WhatsApp receptionist',
+  dashboard: 'Created in dashboard',
+  api: 'Created by API',
 };
 
 type CalendarAppointment = {
@@ -46,6 +47,7 @@ type CalendarAppointment = {
   readonly serviceName: string | null;
   readonly status: AppointmentStatus;
   readonly bookingSource: BookingSource;
+  readonly calendarSyncStatus: CalendarSyncStatus;
 };
 
 type CalendarDay = {
@@ -73,15 +75,14 @@ export default async function CalendarPage() {
   if (!result.ok) {
     return (
       <>
-        <CalendarHeader subtitle="Agenda non disponibile in questo momento." />
+        <CalendarHeader subtitle="Appointments are unavailable right now." />
         <section className="card card-padded stack stack-3">
-          <h2 style={{ fontSize: 'var(--text-lg)' }}>Non riesco a leggere gli appuntamenti</h2>
+          <h2 style={{ fontSize: 'var(--text-lg)' }}>Appointments could not be loaded</h2>
           <p className="muted">
-            La lettura dell&apos;agenda è fallita. Ricarica la pagina fra qualche istante: se il
-            problema resta, controlla lo stato dei servizi.
+            Reload the page in a moment. Check service status if the problem continues.
           </p>
           <Link href="/status" className="btn btn-secondary" style={{ alignSelf: 'flex-start' }}>
-            Stato del servizio
+            Service status
           </Link>
         </section>
       </>
@@ -92,26 +93,26 @@ export default async function CalendarPage() {
 
   return (
     <>
-      <CalendarHeader subtitle={`${data.rangeLabel} · fuso orario ${data.timezone}`} />
+      <CalendarHeader subtitle={`${data.rangeLabel} · time zone ${data.timezone}`} />
 
       <div
         className="kpi-grid"
         style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}
       >
         <article className="kpi">
-          <span className="kpi-label">Oggi</span>
+          <span className="kpi-label">Today</span>
           <span className="kpi-value">{data.todayCount}</span>
         </article>
         <article className="kpi">
-          <span className="kpi-label">Prossimi 7 giorni</span>
+          <span className="kpi-label">Next 7 days</span>
           <span className="kpi-value">{data.weekCount}</span>
         </article>
         <article className="kpi">
-          <span className="kpi-label">Confermati</span>
+          <span className="kpi-label">Confirmed</span>
           <span className="kpi-value">{data.confirmedCount}</span>
         </article>
         <article className="kpi">
-          <span className="kpi-label">Prenotati da Ambrogio</span>
+          <span className="kpi-label">Booked by AI</span>
           <span className="kpi-value">{data.aiBookedCount}</span>
         </article>
       </div>
@@ -119,17 +120,16 @@ export default async function CalendarPage() {
       {data.days.length === 0 ? (
         <section className="card">
           <div className="empty-state">
-            <p className="empty-state-title">Nessun appuntamento in agenda</p>
+            <p className="empty-state-title">No appointments scheduled</p>
             <p className="empty-state-text">
-              Ambrogio prenota da solo quando servizi e orari di apertura sono configurati. Se
-              l&apos;agenda resta vuota, parti da lì.
+              Configure services, business hours, and Google Calendar before enabling booking.
             </p>
             <div className="row" style={{ gap: 'var(--space-2)' }}>
               <Link href="/settings" className="btn btn-primary">
-                Configura servizi e orari
+                Configure services and hours
               </Link>
               <Link href="/conversations" className="btn btn-ghost">
-                Vedi le conversazioni
+                View conversations
               </Link>
             </div>
           </div>
@@ -152,8 +152,8 @@ export default async function CalendarPage() {
                 <h2 style={{ fontSize: 'var(--text-lg)' }}>{day.label}</h2>
                 <span className="muted" style={{ fontSize: 'var(--text-sm)' }}>
                   {day.appointments.length === 1
-                    ? '1 appuntamento'
-                    : `${day.appointments.length} appuntamenti`}
+                    ? '1 appointment'
+                    : `${day.appointments.length} appointments`}
                 </span>
               </header>
 
@@ -206,8 +206,8 @@ function CalendarHeader({ subtitle }: { readonly subtitle: string }) {
   return (
     <div className="dashboard-header">
       <div className="stack stack-2">
-        <span className="eyebrow">Calendario</span>
-        <h1>Agenda</h1>
+        <span className="eyebrow">Appointments</span>
+        <h1>Calendar</h1>
         <p className="muted">{subtitle}</p>
       </div>
     </div>
@@ -227,7 +227,7 @@ async function loadCalendar(session: AuthSession): Promise<CalendarResult> {
     const { data, error } = await supabase
       .from('appointments')
       .select(
-        'id, customer_name, customer_identifier, scheduled_at, duration_minutes, service_type, status, booking_source',
+        'id, customer_name, customer_identifier, scheduled_at, duration_minutes, service_type, status, booking_source, calendar_sync_status',
       )
       .eq('tenant_id', session.tenantId)
       .gte('scheduled_at', new Date(now.getTime() - 2 * DAY_MS).toISOString())
@@ -330,7 +330,7 @@ function buildDayLabel(
   dayKeys: readonly string[],
   timezone: string,
 ): string {
-  const formatted = new Intl.DateTimeFormat('it-IT', {
+  const formatted = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     weekday: 'long',
     day: 'numeric',
@@ -338,11 +338,11 @@ function buildDayLabel(
   }).format(date);
 
   if (key === dayKeys[0]) {
-    return `Oggi · ${formatted}`;
+    return `Today · ${formatted}`;
   }
 
   if (key === dayKeys[1]) {
-    return `Domani · ${formatted}`;
+    return `Tomorrow · ${formatted}`;
   }
 
   return formatted;
@@ -353,32 +353,33 @@ function buildRangeLabel(dayKeys: readonly string[], timezone: string): string {
   const last = dayKeys[dayKeys.length - 1];
 
   if (!first || !last) {
-    return 'Prossimi giorni';
+    return 'Upcoming days';
   }
 
-  const formatter = new Intl.DateTimeFormat('it-IT', {
+  const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     day: 'numeric',
     month: 'long',
   });
 
-  return `Dal ${formatter.format(new Date(`${first}T12:00:00Z`))} al ${formatter.format(
+  return `${formatter.format(new Date(`${first}T12:00:00Z`))} to ${formatter.format(
     new Date(`${last}T12:00:00Z`),
   )}`;
 }
 
 function describeAppointment(appointment: CalendarAppointment): string {
   const parts = [
-    appointment.serviceName ?? 'Servizio non indicato',
+    appointment.serviceName ?? 'Service not specified',
     appointment.durationMinutes !== null ? `${appointment.durationMinutes} min` : null,
     SOURCE_LABEL[appointment.bookingSource],
+    appointment.calendarSyncStatus === 'failed' ? 'Google Calendar: manual review required' : null,
   ].filter((part): part is string => part !== null);
 
   return parts.join(' · ');
 }
 
 function formatTime(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('it-IT', {
+  return new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     hour: '2-digit',
     minute: '2-digit',
@@ -405,8 +406,15 @@ function toCalendarAppointment(row: unknown, timezone: string): CalendarAppointm
   const scheduledAtRaw = readString(record['scheduled_at']);
   const status = record['status'];
   const bookingSource = record['booking_source'];
+  const calendarSyncStatus = record['calendar_sync_status'];
 
-  if (!id || !scheduledAtRaw || !isAppointmentStatus(status) || !isBookingSource(bookingSource)) {
+  if (
+    !id ||
+    !scheduledAtRaw ||
+    !isAppointmentStatus(status) ||
+    !isBookingSource(bookingSource) ||
+    !isCalendarSyncStatus(calendarSyncStatus)
+  ) {
     return null;
   }
 
@@ -426,10 +434,11 @@ function toCalendarAppointment(row: unknown, timezone: string): CalendarAppointm
     customerName:
       readString(record['customer_name']) ??
       readString(record['customer_identifier']) ??
-      'Contatto senza nome',
+      'Unnamed contact',
     serviceName: readString(record['service_type']),
     status,
     bookingSource,
+    calendarSyncStatus,
   };
 }
 
@@ -445,4 +454,10 @@ function isAppointmentStatus(value: unknown): value is AppointmentStatus {
 
 function isBookingSource(value: unknown): value is BookingSource {
   return value === 'manual' || value === 'whatsapp_ai' || value === 'dashboard' || value === 'api';
+}
+
+function isCalendarSyncStatus(value: unknown): value is CalendarSyncStatus {
+  return (
+    value === 'not_configured' || value === 'pending' || value === 'synced' || value === 'failed'
+  );
 }

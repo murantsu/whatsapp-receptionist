@@ -10,22 +10,22 @@ import {
 } from '@/server/conversations/inbox';
 
 export const metadata: Metadata = {
-  title: 'Conversazioni · Ambrogio.ai',
+  title: 'Conversations · Ambrogio.ai',
 };
 
 const PAGE_SIZE = 30;
 
 const STATUS_LABELS: Record<ConversationStatus, { label: string; badge: string }> = {
-  active: { label: 'Attiva', badge: 'badge' },
-  escalated: { label: 'Escalation', badge: 'badge badge-danger' },
-  closed: { label: 'Chiusa', badge: 'badge badge-neutral' },
+  active: { label: 'Active', badge: 'badge' },
+  escalated: { label: 'Needs human reply', badge: 'badge badge-danger' },
+  closed: { label: 'Closed', badge: 'badge badge-neutral' },
   spam: { label: 'Spam', badge: 'badge badge-warm' },
 };
 
 const CHANNEL_LABELS: Record<ConversationChannel, string> = {
   whatsapp: 'WhatsApp',
   instagram_dm: 'Instagram DM',
-  web_chat: 'Chat web',
+  web_chat: 'Web chat',
   sms: 'SMS',
 };
 
@@ -69,11 +69,10 @@ export default async function ConversationsPage({
     <>
       <div className="dashboard-header">
         <div className="stack stack-2">
-          <span className="eyebrow">Conversazioni</span>
+          <span className="eyebrow">Conversations</span>
           <h1>Inbox</h1>
           <p className="muted">
-            Ogni chat gestita da Ambrogio, con lo stato aggiornato. Apri una conversazione per
-            leggere la cronologia e rispondere a mano.
+            Review WhatsApp conversations, see which ones need a human, and reply from the shop.
           </p>
         </div>
 
@@ -84,7 +83,7 @@ export default async function ConversationsPage({
         >
           <div className="field">
             <label htmlFor="filter-status" className="label">
-              Stato
+              Status
             </label>
             <select
               id="filter-status"
@@ -93,7 +92,7 @@ export default async function ConversationsPage({
               defaultValue={status ?? ''}
               style={{ minWidth: '160px' }}
             >
-              <option value="">Tutti</option>
+              <option value="">All</option>
               {(Object.keys(STATUS_LABELS) as ConversationStatus[]).map((value) => (
                 <option key={value} value={value}>
                   {STATUS_LABELS[value].label}
@@ -103,7 +102,7 @@ export default async function ConversationsPage({
           </div>
           <div className="field">
             <label htmlFor="filter-channel" className="label">
-              Canale
+              Channel
             </label>
             <select
               id="filter-channel"
@@ -112,7 +111,7 @@ export default async function ConversationsPage({
               defaultValue={channel ?? ''}
               style={{ minWidth: '160px' }}
             >
-              <option value="">Tutti</option>
+              <option value="">All</option>
               {(Object.keys(CHANNEL_LABELS) as ConversationChannel[]).map((value) => (
                 <option key={value} value={value}>
                   {CHANNEL_LABELS[value]}
@@ -121,24 +120,23 @@ export default async function ConversationsPage({
             </select>
           </div>
           <button type="submit" className="btn btn-secondary">
-            Applica
+            Apply
           </button>
         </form>
       </div>
 
       {failed ? (
         <div className="card card-padded stack stack-3" role="alert">
-          <h2 style={{ fontSize: 'var(--text-lg)' }}>Non riusciamo a caricare le conversazioni</h2>
+          <h2 style={{ fontSize: 'var(--text-lg)' }}>Conversations could not be loaded</h2>
           <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-            Il servizio non ha risposto. Ricarica la pagina: se il problema resta, controlla lo
-            stato del sistema.
+            The service did not respond. Reload the page and check system status if it continues.
           </p>
           <div className="row" style={{ gap: 'var(--space-3)' }}>
             <Link href="/conversations" className="btn btn-secondary btn-sm">
-              Riprova
+              Retry
             </Link>
             <Link href="/status" className="btn btn-ghost btn-sm">
-              Stato del servizio
+              Service status
             </Link>
           </div>
         </div>
@@ -148,22 +146,20 @@ export default async function ConversationsPage({
         <div className="card">
           <div className="empty-state">
             <p className="empty-state-title">
-              {hasFilters
-                ? 'Nessuna conversazione con questi filtri'
-                : 'Ancora nessuna conversazione'}
+              {hasFilters ? 'No conversations match these filters' : 'No conversations yet'}
             </p>
             <p className="empty-state-text">
               {hasFilters
-                ? 'Prova ad allargare i filtri: potrebbero esserci chat in un altro stato o su un altro canale.'
-                : 'Le conversazioni compaiono qui non appena un cliente scrive al numero WhatsApp collegato. Se non hai ancora collegato il numero, parti dalle impostazioni.'}
+                ? 'Try broader filters. A conversation may have another status.'
+                : 'Conversations appear when a customer messages the connected WhatsApp number.'}
             </p>
             {hasFilters ? (
               <Link href="/conversations" className="btn btn-secondary btn-sm">
-                Rimuovi i filtri
+                Clear filters
               </Link>
             ) : (
               <Link href="/settings" className="btn btn-primary btn-sm">
-                Collega WhatsApp
+                Connect WhatsApp
               </Link>
             )}
           </div>
@@ -208,9 +204,9 @@ export default async function ConversationsPage({
                             {CHANNEL_LABELS[conversation.channel]}
                           </span>
                           {conversation.aiEnabled ? (
-                            <span className="badge">AI attiva</span>
+                            <span className="badge">AI active</span>
                           ) : (
-                            <span className="badge badge-warm">Solo operatore</span>
+                            <span className="badge badge-warm">Human only</span>
                           )}
                         </div>
                         {conversation.customerName !== null ? (
@@ -244,7 +240,7 @@ export default async function ConversationsPage({
             style={{ marginTop: 'var(--space-6)', gap: 'var(--space-4)', flexWrap: 'wrap' }}
           >
             <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
-              {result.conversations.length} conversazioni, dalla più recente.
+              {result.conversations.length} conversations, newest first.
             </p>
             <div className="row" style={{ gap: 'var(--space-3)' }}>
               {before !== null ? (
@@ -252,7 +248,7 @@ export default async function ConversationsPage({
                   href={buildHref({ status, channel, before: null })}
                   className="btn btn-ghost btn-sm"
                 >
-                  Torna alle più recenti
+                  Back to newest
                 </Link>
               ) : null}
               {result.nextCursor !== null ? (
@@ -260,7 +256,7 @@ export default async function ConversationsPage({
                   href={buildHref({ status, channel, before: result.nextCursor })}
                   className="btn btn-secondary btn-sm"
                 >
-                  Conversazioni più vecchie
+                  Older conversations
                 </Link>
               ) : null}
             </div>
@@ -325,28 +321,28 @@ function formatRelative(iso: string, now: number): string {
   const timestamp = Date.parse(iso);
 
   if (Number.isNaN(timestamp)) {
-    return 'data non disponibile';
+    return 'date unavailable';
   }
 
   const elapsed = now - timestamp;
 
   if (elapsed < MINUTE_MS) {
-    return 'adesso';
+    return 'now';
   }
 
   if (elapsed < HOUR_MS) {
-    return `${Math.floor(elapsed / MINUTE_MS)} min fa`;
+    return `${Math.floor(elapsed / MINUTE_MS)} min ago`;
   }
 
   if (elapsed < DAY_MS) {
-    return `${Math.floor(elapsed / HOUR_MS)} h fa`;
+    return `${Math.floor(elapsed / HOUR_MS)} hr ago`;
   }
 
   if (elapsed < 7 * DAY_MS) {
-    return `${Math.floor(elapsed / DAY_MS)} g fa`;
+    return `${Math.floor(elapsed / DAY_MS)} days ago`;
   }
 
-  return new Intl.DateTimeFormat('it-IT', {
+  return new Intl.DateTimeFormat('en-US', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',

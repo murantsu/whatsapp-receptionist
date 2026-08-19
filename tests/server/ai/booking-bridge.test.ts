@@ -3,6 +3,7 @@ service viene castato a `AppointmentBookingService` solo per soddisfare la
 firma del costruttore. La validazione runtime non aggiungerebbe valore in test. */
 import { describe, expect, it } from 'vitest';
 
+import { AppError } from '@/lib/errors/app-error';
 import {
   BookingBridgeService,
   type BookingBridgeRepository,
@@ -14,7 +15,9 @@ import type {
   AppointmentBookingService,
   BookingSlot,
   CancelAppointmentInput,
+  ChangeAppointmentResult,
   CreateAppointmentInput,
+  CreateAppointmentResult,
   RescheduleAppointmentInput,
 } from '@/server/appointments/booking';
 
@@ -597,6 +600,288 @@ describe('BookingBridgeService', () => {
       appointmentId: 'appointment_2',
     });
   });
+
+  it('confirms an en-US booking only after Google Calendar sync succeeds', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    repository.savedState = {
+      ...stateWithSlots(),
+      serviceName: 'Oil change',
+      request: {
+        serviceQuery: 'oil change',
+        datePreference: null,
+        timePreference: { dayPart: 'any', startHour: null, endHour: null },
+        urgency: 'normal',
+        customerName: 'Alex Smith',
+        customerPhone: '5551234567',
+        vehicleMake: 'Toyota',
+        vehicleModel: 'Camry',
+        vehicleYear: 2020,
+        problemSymptoms: 'The car is shaking.',
+        confidence: 0.95,
+        signals: [],
+      },
+    };
+    const booking = new FakeAppointmentBookingService();
+    const service = new BookingBridgeService(
+      repository,
+      booking as unknown as AppointmentBookingService,
+    );
+
+    const reply = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      customerIdentifier: '15551234567',
+      text: 'confirm 1',
+    });
+
+    expect(reply.replyText).toContain('is confirmed');
+    expect(reply.handoffReason).toBeUndefined();
+    expect(booking.createCalls[0]).toMatchObject({
+      requireCalendarSync: true,
+      sendConfirmation: false,
+      customerName: 'Alex Smith',
+      customerPhone: '5551234567',
+    });
+    expect(booking.createCalls[0]?.notes).toContain('Vehicle: 2020 Toyota Camry');
+  });
+
+  it('keeps collected auto repair details and does not ask for them again', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    const booking = new FakeAppointmentBookingService();
+    booking.slots = [slot('2026-04-28T14:00:00.000Z', '2026-04-28T14:30:00.000Z')];
+    const service = new BookingBridgeService(
+      repository,
+      booking as unknown as AppointmentBookingService,
+    );
+
+    const first = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'My name is Alex Smith and I have a 2020 Toyota Camry',
+    });
+
+    expect(first.replyText).not.toContain('your name');
+    expect(first.replyText).not.toContain('vehicle year');
+    expect(first.metadata).toMatchObject({
+      bookingBridge: {
+        missingFields: ['requested_service_or_symptoms', 'preferred_date', 'preferred_time'],
+      },
+    });
+
+    const second = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'I need an oil change tomorrow afternoon',
+    });
+
+    expect(second.metadata).toMatchObject({
+      bookingBridge: { action: 'slots_proposed', serviceId: 'service_1' },
+    });
+    expect(second.replyText).toContain('I found these times');
+  });
+
+  it('accepts make, model, and year in separate follow-up messages', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    const booking = new FakeAppointmentBookingService();
+    booking.slots = [slot('2026-04-28T14:00:00.000Z', '2026-04-28T14:30:00.000Z')];
+    const service = new BookingBridgeService(
+      repository,
+      booking as unknown as AppointmentBookingService,
+    );
+    const send = (text: string) =>
+      service.createBookingReply({ ...baseInput(), locale: 'en-US', text });
+
+    const first = await send('My name is Alex Smith. I need an oil change tomorrow afternoon.');
+    expect(first.replyText).toContain('vehicle year, make, and model');
+
+    const make = await send('Toyota');
+    expect(make.replyText).toContain('missing vehicle model and year');
+    expect(make.replyText).not.toContain('your name');
+
+    const model = await send('Camry');
+    expect(model.replyText).toContain('missing vehicle year');
+
+    const year = await send('2020');
+    expect(year.metadata).toMatchObject({
+      bookingBridge: { action: 'slots_proposed', serviceId: 'service_1' },
+    });
+    expect(year.metadata).toMatchObject({
+      bookingBridge: {
+        request: { vehicleMake: 'Toyota', vehicleModel: 'Camry', vehicleYear: 2020 },
+      },
+    });
+  });
+
+  it('lets an explicit human request override a pending booking intake', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    repository.savedState = {
+      status: 'auto_repair_intake',
+      request: {},
+      proposedAt: occurredAt.toISOString(),
+      expiresAt: new Date(occurredAt.getTime() + 30 * 60_000).toISOString(),
+    };
+    const service = new BookingBridgeService(
+      repository,
+      new FakeAppointmentBookingService() as unknown as AppointmentBookingService,
+    );
+
+    const reply = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'I want to speak with a person',
+      intent: 'human_handoff',
+    });
+
+    expect(reply).toEqual({ handled: false, replyText: null, metadata: {} });
+    expect(repository.savedState?.status).toBe('auto_repair_intake');
+  });
+
+  it.each(['failed', 'not_configured'] as const)(
+    'does not confirm an en-US booking when Calendar is %s',
+    async (calendarSyncStatus) => {
+      const repository = new FakeBookingBridgeRepository([
+        serviceOption('service_1', 'Oil change'),
+      ]);
+      repository.savedState = { ...stateWithSlots(), serviceName: 'Oil change' };
+      const booking = new FakeAppointmentBookingService();
+      booking.calendarSyncStatus = calendarSyncStatus;
+      const service = new BookingBridgeService(
+        repository,
+        booking as unknown as AppointmentBookingService,
+      );
+
+      const reply = await service.createBookingReply({
+        ...baseInput(),
+        locale: 'en-US',
+        text: 'confirm 1',
+      });
+
+      expect(reply.handoffReason).toBe('calendar_sync_failed');
+      expect(reply.replyText).toContain('it is not confirmed yet');
+      expect(reply.replyText).not.toMatch(/appointment is confirmed for/i);
+      expect(repository.cleared).toBe(true);
+    },
+  );
+
+  it.each(['Google Calendar authentication failed', 'Google Calendar request timed out'])(
+    'hands “%s” to a person',
+    async (message) => {
+      const repository = new FakeBookingBridgeRepository([
+        serviceOption('service_1', 'Oil change'),
+      ]);
+      repository.savedState = { ...stateWithSlots(), serviceName: 'Oil change' };
+      const booking = new FakeAppointmentBookingService();
+      booking.createError = new AppError('upstream_error', message);
+      const service = new BookingBridgeService(
+        repository,
+        booking as unknown as AppointmentBookingService,
+      );
+
+      const reply = await service.createBookingReply({
+        ...baseInput(),
+        locale: 'en-US',
+        text: 'confirm 1',
+      });
+
+      expect(reply.handoffReason).toBe('calendar_sync_failed');
+      expect(reply.replyText).toContain('not confirmed yet');
+    },
+  );
+
+  it('does not confirm an en-US slot that became unavailable', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    repository.savedState = { ...stateWithSlots(), serviceName: 'Oil change' };
+    const booking = new FakeAppointmentBookingService();
+    booking.createError = new AppError('conflict', 'Requested appointment slot is unavailable');
+    const service = new BookingBridgeService(
+      repository,
+      booking as unknown as AppointmentBookingService,
+    );
+
+    const reply = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'confirm 1',
+    });
+
+    expect(reply.metadata).toMatchObject({ bookingBridge: { action: 'slot_conflict' } });
+    expect(reply.replyText).toContain('no longer available');
+    expect(reply.replyText).not.toContain('is confirmed');
+  });
+
+  it('reschedules the requested en-US appointment and requires Calendar sync', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    repository.appointments = [customerAppointment({ serviceName: 'Oil change' })];
+    const booking = new FakeAppointmentBookingService();
+    booking.slots = [slot('2026-05-01T11:00:00.000Z', '2026-05-01T11:30:00.000Z')];
+    const service = new BookingBridgeService(
+      repository,
+      booking as unknown as AppointmentBookingService,
+    );
+
+    const proposal = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'move my appointment to Friday at 11 AM',
+      intent: 'reschedule_request',
+    });
+    expect(proposal.metadata).toMatchObject({
+      bookingBridge: { action: 'reschedule_slots_proposed' },
+    });
+
+    const confirmation = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'confirm 1',
+      intent: 'other',
+    });
+    expect(confirmation.replyText).toContain('is confirmed');
+    expect(booking.rescheduleCalls[0]).toMatchObject({
+      requireCalendarSync: true,
+      sendConfirmation: false,
+    });
+  });
+
+  it('cancels the matching en-US appointment in Google Calendar', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    repository.appointments = [customerAppointment({ serviceName: 'Oil change' })];
+    const booking = new FakeAppointmentBookingService();
+    const service = new BookingBridgeService(
+      repository,
+      booking as unknown as AppointmentBookingService,
+    );
+
+    const reply = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'cancel my appointment tomorrow',
+      intent: 'cancellation_request',
+    });
+
+    expect(reply.replyText).toContain('cancelled in Google Calendar');
+    expect(booking.cancelCalls[0]).toMatchObject({
+      requireCalendarSync: true,
+      sendCancellation: false,
+    });
+  });
+
+  it('asks for clarification instead of guessing 03/04', async () => {
+    const repository = new FakeBookingBridgeRepository([serviceOption('service_1', 'Oil change')]);
+    const booking = new FakeAppointmentBookingService();
+    const service = new BookingBridgeService(
+      repository,
+      booking as unknown as AppointmentBookingService,
+    );
+
+    const reply = await service.createBookingReply({
+      ...baseInput(),
+      locale: 'en-US',
+      text: 'Book an oil change on 03/04',
+    });
+
+    expect(reply.replyText).toContain('numeric date is ambiguous');
+    expect(booking.availabilityCalls).toHaveLength(0);
+  });
 });
 
 class FakeBookingBridgeRepository implements BookingBridgeRepository {
@@ -646,6 +931,8 @@ class FakeAppointmentBookingService {
   createCalls: CreateAppointmentInput[] = [];
   rescheduleCalls: RescheduleAppointmentInput[] = [];
   cancelCalls: CancelAppointmentInput[] = [];
+  calendarSyncStatus: 'synced' | 'failed' | 'not_configured' = 'synced';
+  createError: Error | null = null;
   slots: BookingSlot[] = [
     slot('2026-04-28T09:00:00.000Z', '2026-04-28T09:30:00.000Z'),
     slot('2026-04-28T10:00:00.000Z', '2026-04-28T10:30:00.000Z'),
@@ -666,22 +953,62 @@ class FakeAppointmentBookingService {
     return this.slots;
   }
 
-  async createAppointment(input: CreateAppointmentInput): Promise<{ appointmentId: string }> {
+  async createAppointment(input: CreateAppointmentInput): Promise<CreateAppointmentResult> {
     this.createCalls.push(input);
-    return { appointmentId: 'appointment_1' };
+    if (this.createError) throw this.createError;
+    const scheduledAt = input.scheduledAt.toISOString();
+    return {
+      appointmentId: 'appointment_1',
+      scheduledAt,
+      endsAt: new Date(input.scheduledAt.getTime() + 30 * 60_000).toISOString(),
+      durationMinutes: 30,
+      calendarSyncStatus: this.calendarSyncStatus,
+      calendarEventId: this.calendarSyncStatus === 'synced' ? 'event_1' : null,
+      calendarEventHtmlLink: null,
+      confirmationQueued: false,
+      confirmationErrorCode: null,
+    };
   }
 
-  async rescheduleAppointment(
-    input: RescheduleAppointmentInput,
-  ): Promise<{ appointmentId: string }> {
+  async rescheduleAppointment(input: RescheduleAppointmentInput): Promise<ChangeAppointmentResult> {
     this.rescheduleCalls.push(input);
-    return { appointmentId: input.appointmentId };
+    return changeResult(
+      input.appointmentId,
+      input.scheduledAt,
+      'confirmed',
+      this.calendarSyncStatus,
+    );
   }
 
-  async cancelAppointment(input: CancelAppointmentInput): Promise<{ appointmentId: string }> {
+  async cancelAppointment(input: CancelAppointmentInput): Promise<ChangeAppointmentResult> {
     this.cancelCalls.push(input);
-    return { appointmentId: input.appointmentId };
+    return changeResult(
+      input.appointmentId,
+      new Date('2026-04-28T09:00:00.000Z'),
+      'cancelled',
+      this.calendarSyncStatus,
+    );
   }
+}
+
+function changeResult(
+  appointmentId: string,
+  scheduledAt: Date,
+  status: 'confirmed' | 'cancelled',
+  calendarSyncStatus: 'synced' | 'failed' | 'not_configured',
+): ChangeAppointmentResult {
+  return {
+    appointmentId,
+    scheduledAt: scheduledAt.toISOString(),
+    endsAt: new Date(scheduledAt.getTime() + 30 * 60_000).toISOString(),
+    durationMinutes: 30,
+    status,
+    calendarSyncStatus,
+    calendarEventId: calendarSyncStatus === 'synced' ? 'event_1' : null,
+    calendarEventHtmlLink: null,
+    notificationQueued: false,
+    notificationErrorCode: null,
+  };
 }
 
 function baseInput() {
@@ -704,7 +1031,7 @@ function serviceOption(id: string, name: string): BookingServiceOption {
   };
 }
 
-function stateWithSlots(): ConversationBookingState {
+function stateWithSlots(): Extract<ConversationBookingState, { status: 'slots_proposed' }> {
   return {
     status: 'slots_proposed',
     serviceId: 'service_1',

@@ -19,15 +19,15 @@ export type ApiResult<T> =
  * stessa condizione deve leggersi allo stesso modo in tutta l'app.
  */
 const MESSAGE_BY_CODE: Readonly<Record<string, string>> = {
-  rate_limited: 'Troppi tentativi ravvicinati. Riprova tra qualche minuto.',
-  bad_request: 'Alcuni dati non sono validi. Controlla i campi e riprova.',
-  unauthorized: 'Sessione non valida. Effettua di nuovo l’accesso.',
-  forbidden: 'Non hai i permessi per completare questa operazione.',
-  not_found: 'Risorsa non trovata: forse è stata modificata da un altro accesso.',
-  conflict: 'Esiste già un elemento con questi dati.',
-  network_error: 'Connessione non riuscita. Controlla la rete e riprova.',
-  invalid_response: 'Il server ha risposto in un formato che non riconosciamo. Ricarica la pagina.',
-  upstream_error: 'Il servizio non è raggiungibile in questo momento. Riprova tra poco.',
+  rate_limited: 'Too many attempts. Please try again in a few minutes.',
+  bad_request: 'Some information is invalid. Check the fields and try again.',
+  unauthorized: 'Your session is invalid. Please sign in again.',
+  forbidden: 'You do not have permission to complete this operation.',
+  not_found: 'The item was not found. It may have been changed in another session.',
+  conflict: 'An item with this information already exists.',
+  network_error: 'The request failed. Check your connection and try again.',
+  invalid_response: 'The server returned an unexpected response. Reload the page.',
+  upstream_error: 'The service is temporarily unavailable. Please try again shortly.',
 };
 
 /** Esegue una chiamata di `api-client` restituendo l'esito invece di lanciarlo. */

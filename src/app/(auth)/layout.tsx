@@ -34,11 +34,11 @@ export default function AuthLayout({ children }: Readonly<{ children: ReactNode 
           <div style={{ width: '100%', maxWidth: '420px' }}>{children}</div>
         </main>
         <p className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-          © {new Date().getFullYear()} Ambrogio.ai. Hosted EU. GDPR ready.
+          © {new Date().getFullYear()} Ambrogio.ai. Managed United States pilot.
         </p>
       </div>
       <aside
-        aria-label="Promo Ambrogio.ai"
+        aria-label="Ambrogio.ai pilot information"
         style={{
           display: 'grid',
           placeItems: 'center',
@@ -70,7 +70,7 @@ export default function AuthLayout({ children }: Readonly<{ children: ReactNode 
               alignSelf: 'center',
             }}
           >
-            Beta Italia · 2026
+            Managed pilot · United States
           </span>
           <h2
             style={{
@@ -81,7 +81,7 @@ export default function AuthLayout({ children }: Readonly<{ children: ReactNode 
             }}
             className="text-balance"
           >
-            La reception che non dorme. Il fatturato che non si ferma.
+            An AI receptionist for your auto repair shop.
           </h2>
           <p
             className="text-pretty"
@@ -91,8 +91,8 @@ export default function AuthLayout({ children }: Readonly<{ children: ReactNode 
               color: 'oklch(95% 0.005 150)',
             }}
           >
-            Ogni giorno migliaia di chiamate vanno perse. Ambrogio risponde, prenota, conferma. Tu
-            fai il tuo lavoro.
+            Handle English WhatsApp FAQs, collect vehicle details, manage appointments, and hand
+            uncertain requests to your team.
           </p>
         </div>
       </aside>

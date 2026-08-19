@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { env } from '@/lib/env';
 import { AppError } from '@/lib/errors/app-error';
 import { logger } from '@/lib/logging/logger';
+import { isEnUsLocale } from '@/lib/pilot/auto-repair';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import type { ConversationChannel, ConversationStatus } from '@/server/conversations/inbox';
 import {
@@ -41,9 +42,14 @@ import type {
 
 export type EscalationReason =
   | 'sensitive_handoff'
+  | 'vehicle_safety_handoff'
   | 'empty_voice_transcript'
   | 'low_voice_transcript_confidence'
-  | 'human_handoff_intent';
+  | 'human_handoff_intent'
+  | 'unverified_information'
+  | 'ai_low_confidence'
+  | 'booking_manual_review'
+  | 'calendar_sync_failed';
 
 export const escalateConversationInputSchema = z
   .object({
@@ -55,15 +61,21 @@ export const escalateConversationInputSchema = z
     occurredAt: z.date(),
     reason: z.enum([
       'sensitive_handoff',
+      'vehicle_safety_handoff',
       'empty_voice_transcript',
       'low_voice_transcript_confidence',
       'human_handoff_intent',
+      'unverified_information',
+      'ai_low_confidence',
+      'booking_manual_review',
+      'calendar_sync_failed',
     ]),
     /**
      * `true` quando l'auto-reply ha gia' accodato un messaggio per il cliente:
      * in quel caso l'avviso di escalation sarebbe un secondo messaggio ravvicinato.
      */
     aiReplied: z.boolean(),
+    locale: z.string().trim().min(2).max(35).optional(),
   })
   .strict();
 
@@ -142,9 +154,14 @@ export type EscalationServiceDependencies = {
 
 const REASON_LABELS: Record<EscalationReason, string> = {
   sensitive_handoff: 'Messaggio con segnali sensibili (emergenza, salute, legale o sicurezza)',
+  vehicle_safety_handoff: 'Richiesta di diagnosi o valutazione sulla sicurezza del veicolo',
   empty_voice_transcript: 'Messaggio vocale non trascrivibile',
   low_voice_transcript_confidence: 'Trascrizione del messaggio vocale poco affidabile',
   human_handoff_intent: 'Il cliente ha chiesto di parlare con una persona',
+  unverified_information: 'Informazione non verificata nella knowledge base',
+  ai_low_confidence: 'Il sistema non ha interpretato il messaggio con sufficiente sicurezza',
+  booking_manual_review: 'La richiesta di prenotazione richiede una verifica manuale',
+  calendar_sync_failed: 'La sincronizzazione con Google Calendar non e riuscita',
 };
 
 const CUSTOMER_NOTICES: Record<EscalationReason, string> = {
@@ -156,6 +173,36 @@ const CUSTOMER_NOTICES: Record<EscalationReason, string> = {
     'Non sono riuscito a capire bene il tuo messaggio vocale. Ho avvisato una persona dello studio: ti ricontatta appena possibile.',
   human_handoff_intent:
     'Ho passato la tua richiesta a una persona dello studio: ti ricontatta appena possibile.',
+  vehicle_safety_handoff:
+    'Non posso stabilire la causa del problema o se il veicolo e sicuro da guidare. Ho avvisato una persona dello studio.',
+  unverified_information:
+    'Non ho informazioni verificate per rispondere. Ho passato la domanda a una persona dello studio.',
+  ai_low_confidence:
+    'Non sono sicuro di aver capito correttamente. Ho passato il messaggio a una persona dello studio.',
+  booking_manual_review:
+    'La richiesta deve essere verificata da una persona dello studio prima di essere confermata.',
+  calendar_sync_failed:
+    'Non sono riuscito a confermare la modifica sul calendario. Una persona dello studio verifichera la richiesta.',
+};
+
+const EN_US_CUSTOMER_NOTICES: Record<EscalationReason, string> = {
+  sensitive_handoff:
+    'I cannot safely handle this message. Please contact local emergency services when appropriate. I have also sent it to the shop for a human reply.',
+  vehicle_safety_handoff:
+    'I cannot determine the cause or whether the vehicle is safe to drive. If you have any safety concern, do not drive it. Contact appropriate roadside or emergency services or a qualified repair professional. I have sent this to the shop for a human reply.',
+  empty_voice_transcript:
+    'Voice messages are not supported for this pilot. Please send the details as text. I have also sent your message to the shop for a human reply.',
+  low_voice_transcript_confidence:
+    'I could not reliably understand that voice message. Please send the details as text. I have also sent it to the shop for a human reply.',
+  human_handoff_intent: 'I have sent your request to the shop for a human reply.',
+  unverified_information:
+    'I do not have verified shop information for that question, so I have sent it to the shop for a human reply.',
+  ai_low_confidence:
+    'I am not confident I understood that correctly, so I have sent it to the shop for a human reply.',
+  booking_manual_review:
+    'The shop needs to review this request before it can be confirmed. I have sent it for a human reply.',
+  calendar_sync_failed:
+    'I could not confirm this change in Google Calendar, so it is not confirmed yet. I have sent it to the shop for manual review.',
 };
 
 const EMAIL_SUBJECT_MAX_LENGTH = 200;
@@ -252,7 +299,9 @@ export class EscalationService implements ConversationEscalator {
       return false;
     }
 
-    const body = CUSTOMER_NOTICES[input.reason];
+    const body = isEnUsLocale(input.locale)
+      ? EN_US_CUSTOMER_NOTICES[input.reason]
+      : CUSTOMER_NOTICES[input.reason];
     const metadata = {
       source: 'escalation_notice',
       reason: input.reason,
@@ -333,6 +382,7 @@ export class EscalationService implements ConversationEscalator {
       reason: input.reason,
       aiReplied: input.aiReplied,
       customerNotified: context.customerNotified,
+      locale: input.locale,
     });
 
     const result = await sendEmailQuietly(message, this.deps.emailSender, this.deps.log);
@@ -385,6 +435,7 @@ type EscalationEmailInput = {
   reason: EscalationReason;
   aiReplied: boolean;
   customerNotified: boolean;
+  locale?: string | undefined;
 };
 
 export function buildEscalationEmail(input: EscalationEmailInput): {
@@ -393,6 +444,10 @@ export function buildEscalationEmail(input: EscalationEmailInput): {
   text: string;
   html: string;
 } {
+  if (isEnUsLocale(input.locale)) {
+    return buildEnUsEscalationEmail(input);
+  }
+
   const label = REASON_LABELS[input.reason];
   const receivedAt = formatInTimezone(input.occurredAt, input.timezone);
   const customer = input.customerName
@@ -461,6 +516,88 @@ function shortReason(reason: EscalationReason): string {
       return 'vocale poco chiaro';
     case 'human_handoff_intent':
       return 'richiesta operatore';
+    case 'vehicle_safety_handoff':
+      return 'sicurezza veicolo';
+    case 'unverified_information':
+      return 'informazione non verificata';
+    case 'ai_low_confidence':
+      return 'bassa confidenza';
+    case 'booking_manual_review':
+      return 'verifica prenotazione';
+    case 'calendar_sync_failed':
+      return 'sync calendario fallita';
+  }
+}
+
+function buildEnUsEscalationEmail(input: EscalationEmailInput): {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+} {
+  const label = englishReasonLabel(input.reason);
+  const receivedAt = formatInTimezone(input.occurredAt, input.timezone, 'en-US');
+  const customer = input.customerName
+    ? `${input.customerName} (${input.customerIdentifier})`
+    : input.customerIdentifier;
+  const excerpt = truncate(input.messageText.trim(), EMAIL_MESSAGE_MAX_LENGTH);
+  const statusLine = input.aiReplied
+    ? 'The AI receptionist already sent a safe acknowledgement to the customer.'
+    : input.customerNotified
+      ? 'The customer was told that the shop will review the request.'
+      : 'ACTION NEEDED: the customer did not receive a reply. Please follow up as soon as possible.';
+  const subject = truncate(
+    `WhatsApp handoff — ${input.studioName} — ${label}`,
+    EMAIL_SUBJECT_MAX_LENGTH,
+  );
+  const conversationText = excerpt.length > 0 ? `"${excerpt}"` : '(no text available)';
+  const text = [
+    'A WhatsApp conversation needs a human reply.',
+    '',
+    `Reason: ${label}`,
+    `Customer: ${customer}`,
+    `Received: ${receivedAt}`,
+    '',
+    conversationText,
+    '',
+    statusLine,
+    '',
+    `Open conversation: ${input.conversationUrl}`,
+  ].join('\n');
+  const html = [
+    '<p><strong>A WhatsApp conversation needs a human reply.</strong></p>',
+    `<table cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:14px;margin:16px 0;">`,
+    `<tr><td style="color:${BRAND_MUTED};">Reason:</td><td>${escapeHtml(label)}</td></tr>`,
+    `<tr><td style="color:${BRAND_MUTED};">Customer:</td><td><strong>${escapeHtml(customer)}</strong></td></tr>`,
+    `<tr><td style="color:${BRAND_MUTED};">Received:</td><td>${escapeHtml(receivedAt)}</td></tr>`,
+    '</table>',
+    `<blockquote style="margin:0 0 16px;padding:12px 16px;border-left:3px solid ${BRAND_TEAL};background:#f3f7f5;">${escapeHtml(conversationText)}</blockquote>`,
+    `<p>${escapeHtml(statusLine)}</p>`,
+    `<p><a href="${escapeHtml(input.conversationUrl)}" style="display:inline-block;padding:12px 24px;background:${BRAND_TEAL};color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Open conversation</a></p>`,
+  ].join('\n');
+
+  return { to: input.to, subject, text, html };
+}
+
+function englishReasonLabel(reason: EscalationReason): string {
+  switch (reason) {
+    case 'sensitive_handoff':
+      return 'Safety or emergency message';
+    case 'vehicle_safety_handoff':
+      return 'Vehicle diagnosis or safety question';
+    case 'empty_voice_transcript':
+    case 'low_voice_transcript_confidence':
+      return 'Unsupported or unclear voice message';
+    case 'human_handoff_intent':
+      return 'Customer requested a person';
+    case 'unverified_information':
+      return 'No verified FAQ answer';
+    case 'ai_low_confidence':
+      return 'Low-confidence AI interpretation';
+    case 'booking_manual_review':
+      return 'Booking needs manual review';
+    case 'calendar_sync_failed':
+      return 'Google Calendar sync failed';
   }
 }
 
@@ -573,9 +710,9 @@ function maskIdentifier(identifier: string): string {
   return identifier.length <= 4 ? '***' : `***${identifier.slice(-4)}`;
 }
 
-function formatInTimezone(date: Date, timezone: string): string {
+function formatInTimezone(date: Date, timezone: string, locale = 'it-IT'): string {
   try {
-    return new Intl.DateTimeFormat('it-IT', {
+    return new Intl.DateTimeFormat(locale, {
       timeZone: timezone,
       dateStyle: 'full',
       timeStyle: 'short',

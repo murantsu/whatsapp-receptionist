@@ -28,6 +28,10 @@ export type StructuredBookingRequest = {
   urgency: BookingUrgency;
   customerName: string | null;
   customerPhone: string | null;
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
+  vehicleYear?: number | null;
+  problemSymptoms?: string | null;
   confidence: number;
   signals: string[];
 };
@@ -36,6 +40,7 @@ export type BookingExtractionInput = {
   text: string;
   now: Date;
   timezone?: string;
+  locale?: string;
 };
 
 export interface BookingRequestExtractor {
@@ -161,6 +166,11 @@ export class RuleBasedBookingRequestExtractor implements BookingRequestExtractor
   async extract(input: BookingExtractionInput): Promise<StructuredBookingRequest> {
     const timezone = input.timezone || defaultTimezone;
     const normalized = normalizeForMatching(input.text);
+
+    if (input.locale?.toLowerCase().startsWith('en')) {
+      return extractEnglishBookingRequest({ ...input, timezone, normalized });
+    }
+
     const signals: string[] = [];
     const timePreference = extractTimePreference(normalized, signals);
     const datePreference = extractDatePreference({
@@ -188,6 +198,10 @@ export class RuleBasedBookingRequestExtractor implements BookingRequestExtractor
       urgency,
       customerName,
       customerPhone,
+      vehicleMake: null,
+      vehicleModel: null,
+      vehicleYear: null,
+      problemSymptoms: null,
       confidence: confidenceForExtraction({
         serviceQuery,
         datePreference,
@@ -197,6 +211,299 @@ export class RuleBasedBookingRequestExtractor implements BookingRequestExtractor
       signals,
     };
   }
+}
+
+function extractEnglishBookingRequest(input: {
+  text: string;
+  now: Date;
+  timezone: string;
+  normalized: string;
+}): StructuredBookingRequest {
+  const signals: string[] = [];
+  const timePreference = extractEnglishTimePreference(input.normalized, signals);
+  const datePreference = extractEnglishDatePreference({
+    normalized: input.normalized,
+    now: input.now,
+    timezone: input.timezone,
+    timePreference,
+    signals,
+  });
+  const serviceQuery = extractEnglishServiceQuery(input.normalized, signals);
+  const customerPhone = extractEnglishPhone(input.text, signals);
+  const customerName = extractEnglishCustomerName(input.text, signals);
+  const vehicle = extractEnglishVehicle(input.text, signals);
+  const problemSymptoms = extractEnglishSymptoms(input.text, signals);
+  const urgency = /\b(urgent|as soon as possible|asap|right away)\b/.test(input.normalized)
+    ? 'urgent'
+    : 'normal';
+
+  if (urgency === 'urgent') {
+    signals.push('urgency');
+  }
+
+  return {
+    serviceQuery,
+    datePreference,
+    timePreference,
+    urgency,
+    customerName,
+    customerPhone,
+    vehicleMake: vehicle.make,
+    vehicleModel: vehicle.model,
+    vehicleYear: vehicle.year,
+    problemSymptoms,
+    confidence: confidenceForExtraction({
+      serviceQuery,
+      datePreference,
+      timePreference,
+      signals,
+    }),
+    signals,
+  };
+}
+
+function extractEnglishTimePreference(
+  normalized: string,
+  signals: string[],
+): BookingTimePreference {
+  const exact = normalized.match(
+    /\b(?:at|around)\s+(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/,
+  );
+
+  if (exact?.[1] && exact[3]) {
+    let hour = Number(exact[1]);
+    const minute = exact[2] ? Number(exact[2]) : 0;
+    const meridiem = exact[3].replace(/\./g, '');
+
+    if (hour >= 1 && hour <= 12 && minute <= 59) {
+      if (meridiem === 'pm' && hour < 12) hour += 12;
+      if (meridiem === 'am' && hour === 12) hour = 0;
+      const startHour = hour + minute / 60;
+      signals.push('time_exact_hour');
+
+      return { dayPart: 'exact_hour', startHour, endHour: Math.min(startHour + 1, 24) };
+    }
+  }
+
+  if (/\b(morning|before noon)\b/.test(normalized)) {
+    signals.push('time_morning');
+    return { dayPart: 'morning', startHour: 8, endHour: 12 };
+  }
+
+  if (/\b(afternoon|after lunch)\b/.test(normalized)) {
+    signals.push('time_afternoon');
+    return { dayPart: 'afternoon', startHour: 12, endHour: 17 };
+  }
+
+  if (/\b(evening|after work)\b/.test(normalized)) {
+    signals.push('time_evening');
+    return { dayPart: 'evening', startHour: 17, endHour: 20 };
+  }
+
+  return { dayPart: 'any', startHour: null, endHour: null };
+}
+
+const englishWeekdays = 'sunday monday tuesday wednesday thursday friday saturday'.split(' ');
+const englishMonths =
+  'january february march april may june july august september october november december'.split(
+    ' ',
+  );
+const englishMonthByName: Record<string, number> = Object.fromEntries<number>([
+  ...englishMonths.map((name, index): [string, number] => [name, index + 1]),
+  ...'jan feb mar apr may jun jul aug sep oct nov dec'
+    .split(' ')
+    .map((name, index): [string, number] => [name, index + 1]),
+]);
+
+function extractEnglishDatePreference(input: {
+  normalized: string;
+  now: Date;
+  timezone: string;
+  timePreference: BookingTimePreference;
+  signals: string[];
+}): BookingDatePreference | null {
+  const today = localDateParts(input.now, input.timezone);
+  const windowFor = (localDate: LocalDate, label: string): BookingDatePreference =>
+    dateWindowForLocalDate({
+      localDate,
+      label,
+      timePreference: input.timePreference,
+      timezone: input.timezone,
+    });
+
+  const numeric = input.normalized.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
+
+  if (numeric?.[1] && numeric[2]) {
+    const first = Number(numeric[1]);
+    const second = Number(numeric[2]);
+
+    if (first >= 1 && first <= 12 && second >= 1 && second <= 12) {
+      input.signals.push('date_ambiguous_numeric');
+      return null;
+    }
+
+    const localDate = resolveExplicitDate({
+      day: second,
+      month: first,
+      year: numeric[3] ? normalizeYear(Number(numeric[3])) : null,
+      today,
+    });
+
+    if (localDate) {
+      input.signals.push('date_explicit_numeric_us');
+      return windowFor(localDate, `${englishMonths[localDate.month - 1]} ${localDate.day}`);
+    }
+
+    input.signals.push('date_invalid');
+    return null;
+  }
+
+  if (/\btoday\b/.test(input.normalized)) {
+    input.signals.push('date_today');
+    return windowFor(today, 'today');
+  }
+
+  if (/\btomorrow\b/.test(input.normalized)) {
+    input.signals.push('date_tomorrow');
+    return windowFor(addLocalDays(today, 1), 'tomorrow');
+  }
+
+  const byMonth = input.normalized.match(
+    new RegExp(
+      String.raw`\b(${Object.keys(englishMonthByName).join('|')})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b`,
+    ),
+  );
+
+  if (byMonth?.[1] && byMonth[2]) {
+    const month = englishMonthByName[byMonth[1]];
+    const localDate = month
+      ? resolveExplicitDate({
+          day: Number(byMonth[2]),
+          month,
+          year: byMonth[3] ? Number(byMonth[3]) : null,
+          today,
+        })
+      : null;
+
+    if (localDate) {
+      input.signals.push('date_explicit_month');
+      return windowFor(localDate, `${englishMonths[localDate.month - 1]} ${localDate.day}`);
+    }
+
+    input.signals.push('date_invalid');
+    return null;
+  }
+
+  for (const [weekday, weekdayName] of englishWeekdays.entries()) {
+    if (new RegExp(`\\b${weekdayName}\\b`).test(input.normalized)) {
+      input.signals.push(`weekday_${weekdayName}`);
+      return windowFor(nextWeekdayDate({ today, weekday }), weekdayName);
+    }
+  }
+
+  return null;
+}
+
+function extractEnglishServiceQuery(normalized: string, signals: string[]): string | null {
+  const knownServices = [
+    'oil change',
+    'brake inspection',
+    'brake service',
+    'tire rotation',
+    'wheel alignment',
+    'state inspection',
+    'diagnostic service',
+    'battery replacement',
+    'air conditioning service',
+    'transmission service',
+  ];
+
+  const known = knownServices.find((service) => normalized.includes(service));
+
+  if (known) {
+    signals.push('service_keyword');
+    return known;
+  }
+
+  const match = normalized.match(
+    /\b(?:for|book|schedule|need|want)\s+(?:an?\s+)?(.+?)(?=\s+(?:today|tomorrow|next|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|at\s+\d|in the morning|in the afternoon)\b|$)/,
+  );
+  const candidate = match?.[1]
+    ?.replace(/\b(an? appointment|appointment|service)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (candidate && candidate.length >= 3 && candidate.length <= 80) {
+    signals.push('service_phrase');
+    return candidate;
+  }
+
+  return null;
+}
+
+function extractEnglishPhone(text: string, signals: string[]): string | null {
+  const match = text.match(/(?:\+1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/);
+
+  if (!match?.[0]) return null;
+  signals.push('customer_phone');
+  return match[0].replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+}
+
+function extractEnglishCustomerName(text: string, signals: string[]): string | null {
+  const match = text.match(
+    /\b(?:my name is|this is|i am|i'm)\s+([\p{L}][\p{L}'-]*(?:\s+[\p{L}][\p{L}'-]*)?)/iu,
+  );
+  const explicitName = match?.[1]?.trim() ?? null;
+  const normalized = normalizeForMatching(text);
+  const simpleName =
+    !explicitName &&
+    /^[\p{L}'-]+(?:\s+[\p{L}'-]+){0,2}$/u.test(text.trim()) &&
+    !/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|appointment|service|repair|change|inspection|acura|audi|bmw|buick|cadillac|chevrolet|chevy|chrysler|dodge|ford|genesis|gmc|honda|hyundai|infiniti|jaguar|jeep|kia|lexus|lincoln|mazda|mercedes|mini|mitsubishi|nissan|ram|subaru|tesla|toyota|volkswagen|volvo)\b/.test(
+      normalized,
+    )
+      ? text.trim()
+      : null;
+  const name = explicitName ?? simpleName;
+
+  if (name) signals.push('customer_name');
+  return name;
+}
+
+function extractEnglishVehicle(
+  text: string,
+  signals: string[],
+): { make: string | null; model: string | null; year: number | null } {
+  const makes =
+    'Acura|Audi|BMW|Buick|Cadillac|Chevrolet|Chevy|Chrysler|Dodge|Ford|Genesis|GMC|Honda|Hyundai|Infiniti|Jaguar|Jeep|Kia|Land Rover|Lexus|Lincoln|Mazda|Mercedes(?:-Benz)?|Mini|Mitsubishi|Nissan|Ram|Subaru|Tesla|Toyota|Volkswagen|Volvo';
+  const match = text.match(
+    new RegExp(`\\b(?:(19[5-9]\\d|20[0-3]\\d)\\s+)?(${makes})\\s+([A-Za-z0-9-]{1,24})\\b`, 'i'),
+  );
+
+  if (!match?.[2] || !match[3]) {
+    return { make: null, model: null, year: null };
+  }
+
+  signals.push('vehicle_make', 'vehicle_model');
+  if (match[1]) signals.push('vehicle_year');
+
+  return {
+    make: match[2],
+    model: match[3],
+    year: match[1] ? Number(match[1]) : null,
+  };
+}
+
+function extractEnglishSymptoms(text: string, signals: string[]): string | null {
+  if (
+    !/\b(noise|noisy|shaking|vibrat|leak|warning light|check engine|won't start|will not start|overheat|smoke|smell|squeal|grind|pulling|stall)\b/i.test(
+      text,
+    )
+  ) {
+    return null;
+  }
+
+  signals.push('problem_symptoms');
+  return text.trim().slice(0, 500);
 }
 
 export function filterSlotsByBookingRequest<T extends { start: string; timezone: string }>(

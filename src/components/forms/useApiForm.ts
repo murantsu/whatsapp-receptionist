@@ -41,17 +41,17 @@ export interface UseApiFormOptions {
  * adatto a un utente finale.
  */
 const MESSAGE_BY_CODE: Record<string, string> = {
-  rate_limited: 'Troppi tentativi ravvicinati. Riprova tra qualche minuto.',
-  bad_request: 'Alcuni dati non sono validi. Controlla i campi e riprova.',
-  validation_error: 'Alcuni dati non sono validi. Controlla i campi e riprova.',
-  unauthorized: 'Sessione non valida. Effettua di nuovo l’accesso.',
-  forbidden: 'Non hai i permessi per completare questa operazione.',
-  not_found: 'Risorsa non trovata.',
-  conflict: 'Esiste già un account con questi dati.',
+  rate_limited: 'Too many attempts. Please try again in a few minutes.',
+  bad_request: 'Some information is invalid. Check the fields and try again.',
+  validation_error: 'Some information is invalid. Check the fields and try again.',
+  unauthorized: 'Your session is invalid. Please sign in again.',
+  forbidden: 'You do not have permission to complete this operation.',
+  not_found: 'The requested item was not found.',
+  conflict: 'An account with this information already exists.',
 };
 
 const FALLBACK_MESSAGE =
-  'Si è verificato un errore imprevisto. Riprova, e se persiste scrivici da /contact.';
+  'An unexpected error occurred. Try again, and contact pilot support if it continues.';
 
 function defaultBuildBody(formData: FormData): Record<string, string> {
   const body: Record<string, string> = {};
@@ -79,7 +79,7 @@ function messageFor(payload: unknown, httpStatus: number): string {
   }
 
   if (httpStatus >= 500) {
-    return 'Il servizio non è raggiungibile in questo momento. Riprova tra poco.';
+    return 'The service is temporarily unavailable. Please try again shortly.';
   }
 
   return FALLBACK_MESSAGE;
@@ -121,7 +121,7 @@ export function useApiForm(options: UseApiFormOptions): {
         // Fallimento di rete: nessuna risposta, quindi nessun envelope da leggere.
         setState({
           status: 'error',
-          message: 'Connessione non riuscita. Controlla la rete e riprova.',
+          message: 'The request failed. Check your connection and try again.',
         });
         return;
       }

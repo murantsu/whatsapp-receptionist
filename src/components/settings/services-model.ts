@@ -80,23 +80,23 @@ export function validateServiceDraft(draft: ServiceDraft): ServiceValidation {
   const price = parsePriceToCents(draft.price);
 
   const errors: ServiceFieldErrors = {
-    ...(name.length === 0 ? { name: 'Il nome del servizio è obbligatorio.' } : {}),
+    ...(name.length === 0 ? { name: 'Service name is required.' } : {}),
     ...(name.length > MAX_NAME_LENGTH
-      ? { name: `Il nome non può superare ${MAX_NAME_LENGTH} caratteri.` }
+      ? { name: `Service name cannot exceed ${MAX_NAME_LENGTH} characters.` }
       : {}),
     ...(description.length > MAX_DESCRIPTION_LENGTH
-      ? { description: `La descrizione non può superare ${MAX_DESCRIPTION_LENGTH} caratteri.` }
+      ? { description: `Description cannot exceed ${MAX_DESCRIPTION_LENGTH} characters.` }
       : {}),
     ...(duration === null
       ? {
-          durationMinutes: `La durata deve essere un numero intero di minuti tra ${MIN_DURATION_MINUTES} e ${MAX_DURATION_MINUTES}.`,
+          durationMinutes: `Duration must be a whole number between ${MIN_DURATION_MINUTES} and ${MAX_DURATION_MINUTES} minutes.`,
         }
       : {}),
     ...(price === 'invalid'
-      ? { price: 'Il prezzo deve essere un importo in euro con al massimo due decimali.' }
+      ? { price: 'Price must be a USD amount with no more than two decimal places.' }
       : {}),
     ...(typeof price === 'number' && price > MAX_PRICE_CENTS
-      ? { price: 'Il prezzo supera il massimo consentito (10.000 €).' }
+      ? { price: 'Price exceeds the allowed maximum ($10,000).' }
       : {}),
   };
 
@@ -147,7 +147,7 @@ export async function createService(input: {
         method: 'POST',
         body: input.service,
       }),
-    'Non siamo riusciti a creare il servizio. Riprova tra poco.',
+    'We could not create the service. Please try again shortly.',
   );
 }
 
@@ -162,7 +162,7 @@ export async function updateService(input: {
         method: 'PATCH',
         body: input.patch,
       }),
-    'Non siamo riusciti a salvare le modifiche. Riprova tra poco.',
+    'We could not save the changes. Please try again shortly.',
   );
 }
 
@@ -179,7 +179,7 @@ export async function archiveService(input: {
         schema: ServiceSchema,
         method: 'DELETE',
       }),
-    'Non siamo riusciti ad archiviare il servizio. Riprova tra poco.',
+    'We could not archive the service. Please try again shortly.',
   );
 }
 
@@ -233,16 +233,16 @@ export function centsToPriceInput(cents: number | null): string {
     return '';
   }
 
-  return `${Math.trunc(cents / 100)},${String(cents % 100).padStart(2, '0')}`;
+  return `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
 }
 
 export function formatPrice(cents: number | null): string {
   if (cents === null) {
-    return 'Prezzo non indicato';
+    return 'Price not listed';
   }
 
   // La divisione serve solo alla formattazione: il dato persistito resta intero.
-  return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(cents / 100);
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 }
 
 export function formatDuration(minutes: number): string {
