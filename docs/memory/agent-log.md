@@ -1536,3 +1536,33 @@ Verification on Node.js 22.23.2:
 - Fork PR #2 finished green on all 7 GitHub Actions jobs, including 56/56 Playwright tests, Linux production build, official Supabase tenant isolation, coverage, dependency audit and secret scan.
 
 Detailed Japanese handoff: `PHASE2_RESULT.md`.
+
+## 2026-08-19 - P0-8: Cross-platform Node 22 Release Gate - Codex
+
+Scope was limited to P0-8 on branch `agent/p0-8-release-gate`, based on the green Phase 2 commit `408dcf1`. No application feature, UI, migration, or real external-service connection was changed.
+
+Implemented:
+
+- Replaced the Windows-invalid URL pathname used by Next.js output tracing with `fileURLToPath()`, fixing the `EPERM C:\Users\Users` standalone build failure at its source.
+- Replaced the Unix-only TypeScript `rm -f` clean command with a small Node.js script.
+- Added a Node 22-enforcing release gate that runs production and full audits, verification, tenant DB tests, production build, and Playwright smoke sequentially with offline placeholders.
+- Bounded Vitest to four workers with a 120-second timeout so the unchanged 619-test suite remains deterministic under Windows/OneDrive I/O pressure.
+- Added five Playwright release smoke checks, a blocking Windows Actions release gate, and made the existing full Playwright job blocking.
+- Switched every setup-node step to `.nvmrc` as the single Node version source.
+
+Local verification on Windows with Node.js 22.23.2:
+
+- Clean `npm ci`: passed; production and full audits: 0 vulnerabilities.
+- TypeScript passed; ESLint passed with 0 errors and 3 pre-existing warnings.
+- Existing suite: 84 files, 619/619 tests passed.
+- Tenant isolation DB suite: 16/16 passed; RLS lint: 22 tables passed.
+- Next.js production build completed all 94 pages, build tracing, standalone output, and final optimization without the previous EPERM error.
+- Playwright release smoke: 5/5 passed.
+
+GitHub draft PR: `murantsu/whatsapp-receptionist#3`. Detailed Japanese handoff: `P0_8_RESULT.md`.
+
+Final fork verification:
+
+- All eight required GitHub Actions jobs were green on the final PR head: verify, production/full dependency audit, gitleaks, Windows release gate, official Supabase tenant isolation, full Playwright E2E, Linux production build, and coverage.
+- One earlier run was cancelled after the GitHub runner remained stuck for 20 minutes downloading the Playwright browser; it had no code or test failure, and the clean final-head run replaced it.
+- P0-9 was not started.
