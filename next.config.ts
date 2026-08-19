@@ -1,4 +1,7 @@
 import type { NextConfig } from 'next';
+import { fileURLToPath } from 'node:url';
+
+const PROJECT_ROOT = fileURLToPath(new URL('.', import.meta.url));
 
 /**
  * Security headers split between this file and `src/middleware.ts`:
@@ -37,7 +40,7 @@ const nextConfig: NextConfig = {
   // Enables Docker standalone output: copies only required files into .next/standalone
   // Required by the Dockerfile. See: https://nextjs.org/docs/app/api-reference/next-config-js/output
   output: 'standalone',
-  outputFileTracingRoot: new URL('.', import.meta.url).pathname,
+  outputFileTracingRoot: PROJECT_ROOT,
   eslint: {
     ignoreDuringBuilds: false,
   },

@@ -18,6 +18,7 @@ const PORT = Number(process.env['E2E_PORT'] ?? 3100);
  */
 const EXTERNAL_BASE_URL = process.env['E2E_BASE_URL'];
 const BASE_URL = EXTERNAL_BASE_URL ?? `http://127.0.0.1:${PORT}`;
+const USE_EXISTING_BUILD = process.env['E2E_USE_EXISTING_BUILD'] === '1';
 
 const isCI = process.env['CI'] !== undefined && process.env['CI'] !== '';
 
@@ -88,7 +89,7 @@ export default defineConfig({
   ...(EXTERNAL_BASE_URL === undefined
     ? {
         webServer: {
-          command: `npm run build && npm run start -- --port ${PORT}`,
+          command: `${USE_EXISTING_BUILD ? '' : 'node node_modules/next/dist/bin/next build && '}node node_modules/next/dist/bin/next start --port ${PORT}`,
           url: BASE_URL,
           env: PLACEHOLDER_ENV,
           reuseExistingServer: !isCI,
