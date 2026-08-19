@@ -11,7 +11,7 @@
 
 Phase 2で指定された英語AI受付、安全判定、FAQ、human handoff、英語予約、主要管理画面の英語化とMVP外機能の非表示を実装しました。全面的な書き直しは行わず、既存のWhatsApp、予約、Google Calendar、FAQ、会話管理、Supabaseの経路を再利用して必要箇所だけを拡張しています。
 
-Node.js 22で通常テスト619件とPhase 1の実DB tenant isolationテスト16件がすべて成功しました。実WhatsApp、実Google Calendar、実Anthropic等のアカウントは使用せず、外部連携の成功・失敗はfake/mockで検証しています。
+Node.js 22で通常テスト619件、Phase 1の実DB tenant isolationテスト16件、Playwright E2E 56件がすべて成功しました。forkのdraft PRではGitHub Actions 7 jobがすべてgreenです。実WhatsApp、実Google Calendar、実Anthropic等のアカウントは使用せず、外部連携の成功・失敗はfake/mockで検証しています。
 
 P0-8とP0-9には着手していません。したがって、Phase 2の商品機能は完了していますが、有料パイロット開始可否の最終判定には、次のPhaseでP0-8のrelease gateとP0-9の実サービス接続試験が必要です。
 
@@ -123,19 +123,25 @@ P0-8とP0-9には着手していません。したがって、Phase 2の商品�
 | Node.js | `v22.23.2` |
 | 通常テスト | **84 files / 619 tests、全成功** |
 | Phase 1 tenant isolation実DBテスト | **1 file / 16 tests、全成功** |
+| Playwright E2E（GitHub Actions） | **56 tests、全成功** |
 | TypeScript | 成功 |
 | ESLint | 0 errors、既存warning 3件 |
 | RLS migration lint | 22 tables、成功 |
 | `npm audit`（全依存） | 0 vulnerabilities |
 | `npm audit --omit=dev` | 0 vulnerabilities |
-| Next.js build | compile、型・lint、94/94ページ生成まで成功。最後のWindows traceで既知のP0-8 `EPERM C:\Users\Users` |
+| GitHub Actions Production build | 成功 |
+| GitHub Actions全体 | **7 jobs、全green** |
+| ローカルWindows Next.js build | compile、型・lint、94/94ページ生成まで成功。最後のWindows traceで既知のP0-8 `EPERM C:\Users\Users` |
 
 通常テストはWindows/OneDriveでAPI route読込が遅いため、ローカル実行時だけ`--testTimeout=120000`を指定しました。テスト内容や本番コードを回避する変更はしていません。タイムアウトの標準化はP0-8のrelease gateで扱います。
+
+最初のPlaywright CIでは、英語化後のSign in画面に対して古いイタリア語文言を期待する14件と、共通フォームの英語エラーがMVP外のイタリア語Contact/Register画面へ漏れた2件が失敗しました。前者は仕様に合わせてE2E期待値を英語へ更新し、後者は共通hookをlocale対応にして既定のイタリア語を維持、パイロット主要フォームだけ`en-US`を明示する局所修正を行いました。再実行では56件すべて成功しています。
 
 ## 5. 既存機能への影響
 
 - Phase 1のmigration、tenant role、service-role境界、RLS保護は変更していません。tenant isolation 16件が再度すべて成功しています。
 - イタリア語の既存booking、voice、Stripe、SDI等の実装は削除していません。通常テスト全体が成功しており、重大な回帰は確認されませんでした。
+- Contact/Register等のMVP外イタリア語画面は、共通フォームの既定localeを`it-IT`へ戻して既存文言を維持しました。英語化はパイロット主要フォームから明示的に選択します。
 - `en-US`パイロット経路だけ安全要件を強制し、既存イタリア語経路は原則維持しています。
 - navigationから外したMVP外機能のrouteとコードは残っているため、将来必要になった場合は再利用できます。
 - 新規dependency、DB migration、schema全面変更は追加していません。

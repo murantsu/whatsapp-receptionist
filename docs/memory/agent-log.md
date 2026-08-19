@@ -1532,5 +1532,7 @@ Verification on Node.js 22.23.2:
 - Full and production npm audits report 0 vulnerabilities.
 - Next.js compiled and generated all 94 pages, then hit the known Windows output-trace `EPERM C:\Users\Users` failure assigned to P0-8.
 - No real WhatsApp, Google Calendar, Anthropic, Resend or other staging account was used, as required; that remains P0-9.
+- The first Playwright CI run caught stale Italian expectations for the now-English sign-in screen and an unintended English generic-error leak into legacy Contact/Register pages. The expectations were updated, and `useApiForm` now defaults to `it-IT` while pilot forms opt into `en-US` explicitly.
+- Fork PR #2 finished green on all 7 GitHub Actions jobs, including 56/56 Playwright tests, Linux production build, official Supabase tenant isolation, coverage, dependency audit and secret scan.
 
 Detailed Japanese handoff: `PHASE2_RESULT.md`.
